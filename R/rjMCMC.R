@@ -1,16 +1,11 @@
 ######################################################################################################
 #                       Implementation of proposed rjMCMC procedure of Maleyeff et al. (2024)
 #                                   Contact: laramaleyeff@gmail.com
-#                                       Last updated: April 2024
 ######################################################################################################
-library(stringr)
-library(splines)
-library(coda)
-library(MASS)
-library(matrixStats)
+
 #' Run Reversible Jump MCMC (rjMCMC) Procedure
 #'
-#' This internal function performs a Reversible Jump MCMC (rjMCMC) procedure to generate the posterior distribution for one chain,
+#' This function performs a Reversible Jump MCMC (rjMCMC) procedure to generate the posterior distribution,
 #' using Bayesian model averaging and free-knot B-splines.
 #'
 #' @param data A data frame containing the observations, including the following columns:
@@ -44,44 +39,59 @@ library(matrixStats)
 #'   \item{sigma_B}{Prior normal variance for model coefficients (default = sqrt(20)).}
 #' }
 #'
-#' @return If the procedure is successful, a list containing:
-#' \describe{
-#'   \item{success}{Boolean indicating whether the procedure was successful based on Geweke convergence.}
-#'   \item{accept_var}{Matrix of whether proposed variable addition/removal was accepted for each iteration.}
-#'   \item{accept_add_knot}{Matrix of whether proposed knot addition was accepted for each iteration.}
-#'   \item{accept_remove_knot}{Matrix of whether proposed knot removal was accepted for each iteration.}
-#'   \item{accept_move_knot}{Matrix of whether proposed knot position change was accepted for each iteration.}
-#'   \item{trt_eff_posterior}{Posterior distribution of treatment effects for each individual.}
-#'   \item{splines_fitted}{Fitted values for interaction spline terms, used for prediction in new data.}
-#'   \item{binary_param}{Posterior distribution of binary variable parameters.}
-#'   \item{inter_trt_param}{Posterior distribution of treatment intercept and main effect.}
-#'   \item{sigma_sq}{Posterior distribution of model standard deviation.}
-#'   \item{k}{Posterior distribution of the number of knots for each spline term.}
-#'   \item{vars_prop_summ}{Posterior inclusion probability for each term.}
-#' }
+#' @return An rjMCMC object with the following components:
+#'   \describe{
+#'     \item{success}{Logical indicating whether the MCMC chains converged based on Geweke diagnostics.}
+#'     \item{geweke.trt_eff_posterior}{Geweke diagnostic for the posterior treatment effects across the dataset.}
+#'     \item{geweke.sd}{Geweke diagnostic for the posterior distribution of residual variance (sigma squared).}
+#'     \item{accept_var}{Matrix indicating the acceptance of variable inclusion/removal for each iteration.}
+#'     \item{accept_add_knot}{Matrix indicating acceptance of knot addition for each spline term across iterations.}
+#'     \item{accept_remove_knot}{Matrix indicating acceptance of knot removal for each spline term across iterations.}
+#'     \item{accept_move_knot}{Matrix indicating acceptance of knot movement for each spline term across iterations.}
+#'     \item{splines_fitted}{List of matrices, one per spline interaction term, containing fitted spline values across iterations.}
+#'     \item{binary_param}{Matrix containing posterior samples of binary variable parameters.}
+#'     \item{inter_trt_param}{Matrix containing posterior samples of the treatment intercept and main effect.}
+#'     \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'     \item{vars_prop}{Matrix indicating the inclusion of variables across iterations (1 for included, 0 for excluded).}
+#'     \item{vars_prop_summ}{Posterior inclusion probabilities for all candidate variables (spline and binary).}
+#'     \item{k}{Matrix indicating the number of knots for each spline term across iterations.}
+#'     \item{trt_eff_posterior}{Matrix of posterior treatment effect estimates, including spline effects.}
+#'     \item{data_fit}{The original dataset passed to the function.}
+#'     \item{candsplineinter}{A character vector indicating the spline interaction terms.}
+#'     \item{candsplinevars}{A character vector of candidate spline variables.}
+#'     \item{candbinaryvars}{A character vector of candidate binary variables.}
+#'     \item{candinter}{A character vector of interaction terms with treatment (can include splines and binary variables).}
+#'     \item{mcmc_specs}{The MCMC specifications used in the procedure.}
+#'     \item{prior_params}{The prior parameters used in the procedure.}
+#'   }
+#'
+#' @references
+#'   Maleyeff, L., Golchi, S., Moodie, E. E. M., & Hudson, M. (2024) "An adaptive
+#'   enrichment design using Bayesian model averaging for selection and threshold-identification
+#'   of predictive variables" <doi:10.1093/biomtc/ujae141>
+#'
+#' @importFrom stats glm sigma quantile rgamma rnorm
+#' @importFrom splines bs
+#' @importFrom coda geweke.diag
+#' @importFrom MASS mvrnorm
+#' @importFrom utils setTxtProgressBar setTxtProgressBar
 #'
 #' @examples
+#' \donttest{
 #' # Example dataset
-#' n <- 1000
-#' data <- data.frame(
-#'   X_1 = runif(n, 0, 1),
-#'   Z_1 = rbinom(n, 1, 0.35),
-#'   Z_2 = rbinom(n, 1, 0.5),
-#'   Z_3 = rbinom(n, 1, 0.65),
-#'   Z_4 = rbinom(n, 1, 0.2),
-#'   Z_5 = rbinom(n, 1, 0.35),
-#'   trt = rbinom(n, 1, 0.5)
-#' )
-#' data$Y <- 2 * data$Z_1 + 2 * data$Z_1 * data$trt + rnorm(n, 0, 0.1)
+#' data("simulated_data")
 #'
 #' candsplinevars <- c("X_1")
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 1000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01, degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
+#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
+#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
+#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 #'
-#' results <- rjMCMC(data, candsplinevars, candbinaryvars, candinter, mcmc_specs, prior_params)
+#' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
+#'                   mcmc_specs, prior_params)
+#' }
 #' @export
 rjMCMC <- function(data,
                    candsplinevars,
@@ -113,7 +123,7 @@ rjMCMC <- function(data,
   for (param in names(default_mcmc_specs)) {
     if (is.null(mcmc_specs[[param]])) {
       mcmc_specs[[param]] <- default_mcmc_specs[[param]]
-      print(paste("Setting", param, "to default of", default_mcmc_specs[[param]]))
+      message(paste("Setting", param, "to default of", default_mcmc_specs[[param]]))
     }
   }
 
@@ -129,7 +139,7 @@ rjMCMC <- function(data,
   )
 
   # If prior_params is NULL, use default_prior_params
-  if (is.null(default_prior_params)) {
+  if (is.null(prior_params)) {
     prior_params <- default_prior_params
   }
 
@@ -137,7 +147,7 @@ rjMCMC <- function(data,
   for (param in names(default_prior_params)) {
     if (is.null(prior_params[[param]])) {
       prior_params[[param]] <- default_prior_params[[param]]
-      print(paste("Setting", param, "to default of", default_prior_params[[param]]))
+      message(paste("Setting", param, "to default of", default_prior_params[[param]]))
     }
   }
 
@@ -156,7 +166,6 @@ rjMCMC <- function(data,
   if (!(all(data$trt %in% c(0, 1)) && length(unique(data$trt)) == 2)) {
     stop("data$trt must be binary")
   }
-
 
   B = mcmc_specs$B
   B_per_chain = B/mcmc_specs$chains
@@ -181,7 +190,10 @@ rjMCMC <- function(data,
   candbinaryvars_ext = c(paste0(candbinaryvars,"_main", recycle0 = T),
                          paste0(intersect(candbinaryvars, candinter),"_inter", recycle0 = T))
   n_cand_vars = length(candsplinevars_ext) + length(candbinaryvars_ext)
-  candvars_ext = c(candsplinevars_ext, candbinaryvars_ext)
+  candvars_ext = c(paste0(candsplinevars,"_main", recycle0 = T),
+                   paste0(candbinaryvars,"_main", recycle0 = T),
+                   paste0(intersect(candsplinevars, candinter),"_inter", recycle0 = T),
+                   paste0(intersect(candbinaryvars, candinter),"_inter", recycle0 = T))
   candsplineinter = intersect(candsplinevars, candinter)
   candmain = c(candsplinevars,candbinaryvars)
 
@@ -189,9 +201,9 @@ rjMCMC <- function(data,
   binary_param_all = matrix(nrow = B, ncol = length(candbinaryvars_ext), dimnames = list(NULL,candbinaryvars_ext))
   sigma_sq_all = array(dim = c(B, 1))
   splines_fitted_all = list()
-  if (length(candsplineinter) > 0) {
-    for (l in 1:length(candsplineinter)) {
-      splines_fitted_all[[candsplineinter[l]]] <- matrix(0, nrow = B, ncol = nrow(data))
+  if (length(candsplinevars_ext) > 0) {
+    for (l in 1:length(candsplinevars_ext)) {
+      splines_fitted_all[[candsplinevars_ext[l]]] <- matrix(0, nrow = B, ncol = nrow(data))
     }
   }
   vars_prop_all = matrix(nrow = B, ncol = n_cand_vars, dimnames = list(NULL,candvars_ext))
@@ -206,8 +218,8 @@ rjMCMC <- function(data,
 
 
   for (chain in 1:mcmc_specs$chains) {
-    pb <- txtProgressBar(min = 1, max = iterations, style = 3, width = 50, char = "=")
-    print(paste0("Chain ", chain, ": "))
+    pb <- utils::txtProgressBar(min = 1, max = iterations, style = 3, width = 50, char = "=")
+    message(paste0("Chain ", chain, ": "))
     inter_trt_param = array(dim = c(iterations,2))
     sigma_sq = array(dim = c(iterations,1))
     accept_var = matrix(nrow = iterations, ncol = 2)
@@ -251,7 +263,7 @@ rjMCMC <- function(data,
       names(knotscur_idx) = candsplinevars_ext
 
       for (i in 1:length(candsplinevars_ext)) {
-        knotscand_i = quantile(data[[sub("_[^_]+$", "", candsplinevars_ext[i])]],
+        knotscand_i = stats::quantile(data[[sub("_[^_]+$", "", candsplinevars_ext[i])]],
                                seq(0,1,length.out=k_max+2))[-c(1,k_max+2)]
 
         knotscand[[candsplinevars_ext[i]]] = knotscand_i
@@ -260,12 +272,13 @@ rjMCMC <- function(data,
       spline_mod_mat = list()
       spline_mod_mat_raw = list()
       for (i in 1:length(candsplinevars_ext)) {
-        mod_mat_i = bs(data[[sub("_[^_]+$", "", candsplinevars_ext[i])]],
+        mod_mat_i = splines::bs(data[[sub("_[^_]+$", "", candsplinevars_ext[i])]],
                        degree = degree,
                        knots = knotscand[[candsplinevars_ext[i]]][knotscur_idx[[candsplinevars_ext[i]]]],
                        intercept = F)
-        if (length(grep("inter",candsplinevars_ext[i]))>0) {
-          spline_mod_mat_raw[[candsplinevars_ext[i]]] = mod_mat_i
+        spline_mod_mat_raw[[candsplinevars_ext[i]]] = mod_mat_i
+
+        if (grepl("_inter", candsplinevars_ext[i])) {
           mod_mat_i = mod_mat_i*data$trt
         }
 
@@ -277,22 +290,22 @@ rjMCMC <- function(data,
     }
 
     if (length(candbinaryvars_ext) == 0 & length(candsplinevars_ext) == 0) {
-      mod_start <- glm(Y ~ trt, family=gaussian(),data=data)
+      mod_start <- stats::glm(Y ~ trt, data=data)
     } else if (length(candbinaryvars_ext) == 0) {
-      mod_start <- glm(Y ~ trt +
-                         do.call(cbind, spline_mod_mat),data=data,family=gaussian())
+      mod_start <- stats::glm(Y ~ trt +
+                         do.call(cbind, spline_mod_mat),data=data)
     } else if (length(candsplinevars_ext) == 0) {
-      mod_start <- glm(Y ~ trt + do.call(cbind,binary_mod_mat), data=data,family=gaussian())
+      mod_start <- stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat), data=data)
       binary_param[1,] = coef(mod_start)[-c(1,2)]
     } else {
-      mod_start <- glm(Y ~ trt + do.call(cbind,binary_mod_mat) +
-                         do.call(cbind, spline_mod_mat),data=data,family=gaussian())
+      mod_start <- stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat) +
+                         do.call(cbind, spline_mod_mat),data=data)
       binary_param[1,] = coef(mod_start)[3:(length(candbinaryvars_ext)+2)]
     }
 
 
     inter_trt_param[1,] = c(coef(mod_start)[1], coef(mod_start)[2])
-    sigma_sq[1] = sigma(mod_start)^2
+    sigma_sq[1] = stats::sigma(mod_start)^2
     if (length(candsplinevars_ext) > 0) {
       ncoef_perx = k[1,] + degree
       coefs = split(coef(mod_start)[-c(1:(length(candbinaryvars_ext)+2))],rep(1:(length(ncoef_perx)),ncoef_perx))
@@ -304,19 +317,19 @@ rjMCMC <- function(data,
 
       spline_param[[1]] = spline_ols_param
 
-      for (l in 1:length(candsplineinter)) {
-        splines_fitted[[candsplineinter[l]]] = matrix(nrow=iterations,
+      for (l in 1:length(candsplinevars_ext)) {
+        splines_fitted[[candsplinevars_ext[l]]] = matrix(nrow=iterations,
                                                       ncol=nrow(data))
-        splines_fitted[[candsplineinter[l]]][1,] = splinesFitted(0,
-                                                                 spline_param[[1]][[paste0(candsplineinter[l],"_inter")]],
-                                                                 spline_mod_mat_raw[[paste0(candsplineinter[l],"_inter")]])
+        splines_fitted[[candsplinevars_ext[l]]][1,] = splinesFitted(0,
+                                                                    spline_param[[1]][[candsplinevars_ext[l]]],
+                                                                    spline_mod_mat_raw[[candsplinevars_ext[l]]])
 
       }
     }
 
 
     for (i in 1:(iterations-1)) {
-      setTxtProgressBar(pb, i)
+      utils::setTxtProgressBar(pb, i)
       if (length(candsplinevars_ext) > 0) {
         spline_param[[i+1]] = spline_param[[i]]
         k[i+1,] = k[i,]
@@ -338,13 +351,11 @@ rjMCMC <- function(data,
             knotscur_idx_x = move_knot$knotscur_idx_x
             spline_ols_param[[j_name]] = move_knot$spline_ols_param_x
             spline_mod_mat[[j_name]] = move_knot$spline_mod_mat_x
-            if (length(grep("inter",j_name))>0) {
-              spline_mod_mat_raw[[j_name]] = move_knot$spline_mod_mat_raw_x
-            }
+            spline_mod_mat_raw[[j_name]] = move_knot$spline_mod_mat_raw_x
             knotscur_x = move_knot$knotscur_x
             accept_move_knot[i,] = move_knot$accept
 
-            v <- rnorm(1,0,sigma_v)
+            v <- stats::rnorm(1,0,sigma_v)
             u_1 <- runif(1)
 
             # Add a knot
@@ -388,9 +399,7 @@ rjMCMC <- function(data,
 
             # Update spline model matrix
             spline_mod_mat[[j_name]] = add_remove_knot$spline_mod_mat_x
-            if (length(grep("inter",j_name))>0) {
-              spline_mod_mat_raw[[j_name]] = add_remove_knot$spline_mod_mat_raw_x
-            }
+            spline_mod_mat_raw[[j_name]] = add_remove_knot$spline_mod_mat_raw_x
 
             # Update all splines
             curspline_idx = which(candsplinevars_ext %in% curvars_ext)
@@ -410,7 +419,7 @@ rjMCMC <- function(data,
             mean_block = Sigma_block %*% (t(spline_mod_mat[[j_name]]) %*% (data$Y - X_rest %*% beta_rest)) / sigma_sq[i]
 
             # Sample from the conditional posterior
-            spline_param[[i+1]][[j_name]] <- mvrnorm(1, mu = mean_block, Sigma = Sigma_block)
+            spline_param[[i+1]][[j_name]] <- MASS::mvrnorm(1, mu = mean_block, Sigma = Sigma_block)
             knotscur_idx[[j_name]] = knotscur_idx_x
           }
         }
@@ -514,7 +523,7 @@ rjMCMC <- function(data,
                                                                              binary_mod_mat,
                                                                              spline_param[[i+1]],
                                                                              spline_mod_mat) + values %*% inter_trt_param[i+1, j]) / sigma_sq[i]
-        inter_trt_param[i+1, j] <- rnorm(1, beta_j_hat, sqrt(V_beta_j))
+        inter_trt_param[i+1, j] <- stats::rnorm(1, beta_j_hat, sqrt(V_beta_j))
       }
 
       if (length(curbinary_ext) > 0) {
@@ -530,7 +539,7 @@ rjMCMC <- function(data,
                                                                                  binary_mod_mat,
                                                                                  spline_param[[i+1]],
                                                                                  spline_mod_mat) + values %*% binary_param[i+1,j]) / sigma_sq[i]
-            binary_param[i+1, j] <- rnorm(1, beta_j_hat, sqrt(V_beta_j))
+            binary_param[i+1, j] <- stats::rnorm(1, beta_j_hat, sqrt(V_beta_j))
           }
         }
       }
@@ -544,17 +553,17 @@ rjMCMC <- function(data,
                                            spline_mod_mat
 
       )
-      sigma_sq[i+1] <- 1/rgamma(1, shape=nrow(data)/2+a_0, rate=sum(resids^2)/2+b_0)
+      sigma_sq[i+1] <- 1/stats::rgamma(1, shape=nrow(data)/2+a_0, rate=sum(resids^2)/2+b_0)
 
       #
       # Update treatment effect, use the "raw" model.matrix which contains the
       # spline matrix for the interaction effect, before being multiplied by the
       # treatment indicator
       if (length(candsplinevars_ext) > 0) {
-        for (l in 1:length(candsplineinter)) {
-          splines_fitted[[candsplineinter[l]]][i+1,] = splinesFitted(0,
-                                                                   spline_param[[i+1]][[paste0(candsplineinter[l],"_inter")]],
-                                                                   spline_mod_mat_raw[[paste0(candsplineinter[l],"_inter")]])
+        for (l in 1:length(candsplinevars_ext)) {
+          splines_fitted[[candsplinevars_ext[l]]][i+1,] = splinesFitted(0,
+                                                                   spline_param[[i+1]][[candsplinevars_ext[l]]],
+                                                                   spline_mod_mat_raw[[candsplinevars_ext[l]]])
 
         }
       }
@@ -577,9 +586,9 @@ rjMCMC <- function(data,
 
     binary_param_all[((chain - 1) * B_per_chain + 1):(chain * B_per_chain), ] <- binary_param[index_to_keep, ]
 
-    if (length(candsplineinter) > 0) {
-      for (l in 1:length(candsplineinter)) {
-        spline_name <- candsplineinter[l]
+    if (length(candsplinevars_ext) > 0) {
+      for (l in 1:length(candsplinevars_ext)) {
+        spline_name <- candsplinevars_ext[l]
         splines_fitted_all[[spline_name]][((chain - 1) * B_per_chain + 1):(chain * B_per_chain), ] <- splines_fitted[[spline_name]][index_to_keep, ]
       }
     }
@@ -588,18 +597,38 @@ rjMCMC <- function(data,
 
   }
 ############################################ MCMC diagnostics ###############################################
+  rename_vars <- function(var_name) {
+    var_name <- gsub("_main$", "", var_name)  # Remove "_main"
+    var_name <- gsub("_inter$", ":trt", var_name)  # Replace "_inter" with ":trt"
+    return(var_name)
+  }
+  colnames(binary_param_all) <- unname(sapply(colnames(binary_param_all), rename_vars))
+  colnames(accept_remove_knot_all) <- unname(sapply(colnames(accept_remove_knot_all), rename_vars))
+  colnames(accept_add_knot_all) <- unname(sapply(colnames(accept_add_knot_all), rename_vars))
+  colnames(accept_move_knot_all) <- unname(sapply(colnames(accept_move_knot_all), rename_vars))
+  colnames(vars_prop_all) <- unname(sapply(colnames(vars_prop_all), rename_vars))
+  colnames(k_all) <- unname(sapply(colnames(k_all), rename_vars))
+
+  names(splines_fitted_all) <- sapply(names(splines_fitted_all), rename_vars)
+
   trt_eff_posterior = t(matrix(1,nrow=nrow(data)) %*% t(matrix(inter_trt_param_all[,2])))
   if (length(candsplineinter) > 0) {
     for (m in 1:length(candsplineinter)) {
-      trt_eff_posterior = trt_eff_posterior + splines_fitted_all[[candsplineinter[m]]]
+      trt_eff_posterior = trt_eff_posterior + splines_fitted_all[[paste0(candsplineinter[m],":trt")]]
     }
+  }
+
+  candbinaryinter = intersect(candbinaryvars,candinter)
+  if (length(candbinaryinter) > 0) {
+    trt_eff_posterior = trt_eff_posterior +
+      binary_param_all[,paste0(candbinaryinter,":trt")] %*% t(as.matrix(data[,candbinaryinter]))
   }
 
   geweke.trt_eff_posterior <- rep(NA, nrow(data))
   for (t in 1:nrow(data)) {
-    geweke.trt_eff_posterior[t] <- geweke.diag(trt_eff_posterior[,t], frac1=0.25, frac2=0.25)[[1]]
+    geweke.trt_eff_posterior[t] <- coda::geweke.diag(trt_eff_posterior[,t], frac1=0.25, frac2=0.25)[[1]]
   }
-  geweke.sd <- geweke.diag(sigma_sq_all, frac1=0.25, frac2=0.25)[[1]]
+  geweke.sd <- coda::geweke.diag(sigma_sq_all, frac1=0.25, frac2=0.25)[[1]]
 
   # Assess convergence
   geweke.conv <- !(max(abs(geweke.trt_eff_posterior))>4 | max(abs(geweke.sd))>4)
@@ -607,29 +636,30 @@ rjMCMC <- function(data,
   vars_prop_summ = colMeans(vars_prop_all)
   names(vars_prop_summ) = colnames(vars_prop_all)
 
-  if (geweke.conv) {
-    return(list(
-      success = TRUE,
-      accept_var = accept_var_all,
-      accept_add_knot = accept_add_knot_all,
-      accept_remove_knot = accept_remove_knot_all,
-      accept_move_knot = accept_move_knot_all,
-      splines_fitted = splines_fitted_all,
-      binary_param = binary_param_all,
-      inter_trt_param = inter_trt_param_all,
-      sigma_sq = sigma_sq_all,
-      vars_prop = vars_prop_all,
-      vars_prop_summ = vars_prop_summ,
-      k = k_all,
-      trt_eff_posterior = trt_eff_posterior,
-      data_fit = data,
-      candsplinevars = candsplinevars,
-      candbinaryvars = candbinaryvars,
-      candinter = candinter,
-      mcmc_specs = mcmc_specs,
-      prior_params = prior_params))
-  } else {
-    return(list(success = FALSE))
-  }
+  obj <- list(
+    success = geweke.conv,
+    geweke.trt_eff_posterior = geweke.trt_eff_posterior,
+    geweke.sd = geweke.sd,
+    accept_var = accept_var_all,
+    accept_add_knot = accept_add_knot_all,
+    accept_remove_knot = accept_remove_knot_all,
+    accept_move_knot = accept_move_knot_all,
+    splines_fitted = splines_fitted_all,
+    binary_param = binary_param_all,
+    inter_trt_param = inter_trt_param_all,
+    sigma_sq = sigma_sq_all,
+    vars_prop = vars_prop_all,
+    vars_prop_summ = vars_prop_summ,
+    k = k_all,
+    trt_eff_posterior = trt_eff_posterior,
+    data_fit = data,
+    candsplineinter = candsplineinter,
+    candsplinevars = candsplinevars,
+    candbinaryvars = candbinaryvars,
+    candinter = candinter,
+    mcmc_specs = mcmc_specs,
+    prior_params = prior_params)
+  class(obj) <- c("rjMCMC", class(obj))
+  return(obj)
 }
 

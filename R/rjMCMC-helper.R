@@ -14,10 +14,11 @@
 #'   \item{binary_check}{A named logical vector indicating whether each candidate binary variable is binary.}
 #'   \item{non_binary_columns}{A vector of variable names that are not binary.}
 #' }
+#' @importFrom stats setNames
 #' @keywords internal
 check_binary_columns <- function(data, candbinaryvars) {
   # Initialize a named logical vector to store the results
-  result <- setNames(logical(length(candbinaryvars)), candbinaryvars)
+  result <- stats::setNames(logical(length(candbinaryvars)), candbinaryvars)
   non_binary_cols <- c()
 
   # Check each column
@@ -136,6 +137,7 @@ paste_ <- function(set, suffix) {
 #' @param var The variance of the model.
 #'
 #' @return The log-likelihood of the data given the model.
+#' @importFrom stats dnorm
 #' @keywords internal
 logLikelihoodCustom <- function(Y,
                                 trt,
@@ -152,7 +154,7 @@ logLikelihoodCustom <- function(Y,
                              spline_param_,
                              spline_mat_)
 
-  singlelikelihoods = dnorm(Y, mean = pred, sd = sqrt(var), log = T)
+  singlelikelihoods = stats::dnorm(Y, mean = pred, sd = sqrt(var), log = T)
   sumll = sum(singlelikelihoods)
   return(sumll)
 }
@@ -169,6 +171,8 @@ logLikelihoodCustom <- function(Y,
 #' @param ... Additional arguments related to the current spline and binary parameters.
 #'
 #' @return A list containing the updated knot indices, spline coefficients, and acceptance indicator.
+#' @importFrom splines bs
+#' @importFrom stats glm
 #' @keywords internal
 moveKnot <- function(Y,
                      data,
@@ -218,18 +222,17 @@ moveKnot <- function(Y,
                               spline_param_i[-j],
                               spline_mod_mat[-j])
 
-    new_spline = bs(data[[sub("_[^_]+$", "", varcur)]],
+    new_spline = splines::bs(data[[sub("_[^_]+$", "", varcur)]],
                     degree = degree,
                     knots = knots_propose)
 
+    new_spline_raw = new_spline
     if (length(grep("inter",varcur))>0) {
-      new_spline_raw = new_spline
       new_spline = new_spline*data$trt
     }
 
-    mod_propose <- glm(Y ~ -1 + new_spline,
+    mod_propose <- stats::glm(Y ~ -1 + new_spline,
                        data = data,
-                       family = gaussian(),
                        offset = offset)
 
     spline_mod_mat_propose = spline_mod_mat
@@ -255,18 +258,17 @@ moveKnot <- function(Y,
       log(length(window_reverse))
 
 
-    gamma <- runif(1,0,1)
+    gamma <- stats::runif(1,0,1)
     if (gamma < min(1,exp(log_prob))) {
       # keep track of which knots
       knotscur_idx_x = knotscur_idx_propose
       knotscur_x = knots_propose
       # keep track of OLS model coefs
-      spline_ols_param_x = coef(mod_propose)
+      spline_ols_param_x = stats::coef(mod_propose)
       # keep track of model matrices
       spline_mod_mat_x = new_spline
-      if (length(grep("inter",varcur))>0) {
-        spline_mod_mat_raw_x = new_spline_raw
-      }
+      spline_mod_mat_raw_x = new_spline_raw
+
       accept = 1
     } else {
       accept = 0
@@ -295,6 +297,8 @@ moveKnot <- function(Y,
 #' @param ... Additional arguments related to the current spline and binary parameters.
 #'
 #' @return A list containing the updated knot indices, spline coefficients, and acceptance indicator.
+#' @importFrom splines bs
+#' @importFrom stats glm coef runif
 #' @keywords internal
 addKnot <- function(Y,
                     data,
@@ -339,21 +343,20 @@ addKnot <- function(Y,
                               spline_mod_mat[-j])
 
 
-    new_spline = bs(data[[sub("_[^_]+$", "", varcur)]],
+    new_spline = splines::bs(data[[sub("_[^_]+$", "", varcur)]],
                     degree = degree,
                     knots = knots_propose)
 
+    new_spline_raw = new_spline
     if (length(grep("inter",varcur))>0) {
-      new_spline_raw = new_spline
       new_spline = new_spline*data$trt
     }
 
-    mod_propose <- glm(Y ~ -1 + new_spline,
+    mod_propose <- stats::glm(Y ~ -1 + new_spline,
                        data = data,
-                       family = gaussian(),
                        offset = offset)
 
-    spline_propose = coef(mod_propose)
+    spline_propose = stats::coef(mod_propose)
     spline_propose[-(k_interval_propose+1)] = spline_propose[-(k_interval_propose+1)] +
       spline_param_i[[j]] -
       spline_ols_param_x
@@ -386,7 +389,7 @@ addKnot <- function(Y,
       (v^2/2*sigma_v^2) + (1/(2*sigma_B^2))*(t(spline_param_i[[varcur]]) %*% spline_param_i[[varcur]] -
                                                t(spline_propose) %*% (spline_propose))
 
-    gamma <- runif(1,0,1)
+    gamma <- stats::runif(1,0,1)
     if (gamma < min(1,exp(log_prob))) {
       # keep track of spline coeffients
       spline_param_x = spline_propose
@@ -395,12 +398,10 @@ addKnot <- function(Y,
       # keep track of which knots
       knotscur_idx_x = knotscur_idx_propose
       # keep track of OLS model coeffieints
-      spline_ols_param_x = coef(mod_propose)
+      spline_ols_param_x = stats::coef(mod_propose)
       # keep track of model matrices
       spline_mod_mat_x = new_spline
-      if (length(grep("inter",varcur))>0) {
-        spline_mod_mat_raw_x = new_spline_raw
-      }
+      spline_mod_mat_raw_x = new_spline_raw
       accept = 1
 
     } else {
@@ -436,6 +437,8 @@ addKnot <- function(Y,
 #' @param ... Additional arguments related to the current spline and binary parameters.
 #'
 #' @return A list containing the updated knot indices, spline coefficients, and acceptance indicator.
+#' @importFrom splines bs
+#' @importFrom stats glm coef runif
 #' @keywords internal
 removeKnot <- function(Y,
                        data,
@@ -480,20 +483,19 @@ removeKnot <- function(Y,
                               spline_param_i[-j],
                               spline_mod_mat[-j])
 
-    new_spline = bs(data[[sub("_[^_]+$", "", varcur)]],
+    new_spline = splines::bs(data[[sub("_[^_]+$", "", varcur)]],
                     degree = degree,
                     knots = knots_propose)
 
+    new_spline_raw = new_spline
     if (length(grep("inter",varcur))>0) {
-      new_spline_raw = new_spline
       new_spline = new_spline*data$trt
     }
 
-    mod_propose <- glm(Y ~ -1 + new_spline,
+    mod_propose <- stats::glm(Y ~ -1 + new_spline,
                        data = data,
-                       family = gaussian(),
                        offset = offset)
-    spline_propose = coef(mod_propose)
+    spline_propose = stats::coef(mod_propose)
     spline_propose = spline_propose +
       spline_param_i[[j]][-(k_interval_propose+1)] -
       spline_ols_param_x[-(k_interval_propose+1)]
@@ -525,7 +527,7 @@ removeKnot <- function(Y,
       (t(spline_param_i[[varcur]]) %*% spline_param_i[[varcur]] -
          t(spline_propose) %*% (spline_propose))
 
-    gamma <- runif(1,0,1)
+    gamma <- stats::runif(1,0,1)
     if (gamma < min(1,exp(log_prob))) {
       # keep track of spline coefs
       spline_param_x = spline_propose
@@ -534,12 +536,10 @@ removeKnot <- function(Y,
       # keep track of which knots
       knotscur_idx_x = knotscur_idx_propose
       # keep track of OLS model coefs
-      spline_ols_param_x = coef(mod_propose)
+      spline_ols_param_x = stats::coef(mod_propose)
       # keep track of model matrices
       spline_mod_mat_x = new_spline
-      if (length(grep("inter",varcur))>0) {
-        spline_mod_mat_raw_x = new_spline_raw
-      }
+      spline_mod_mat_raw_x = new_spline_raw
       accept = 1
 
     } else {
@@ -574,6 +574,7 @@ removeKnot <- function(Y,
 #' @param ... Additional arguments related to the current binary and spline parameters.
 #'
 #' @return A list containing the updated variable parameters and acceptance indicator.
+#' @importFrom stats dnorm glm coef runif
 #' @keywords internal
 addVar <- function(Y,
                    trt,
@@ -613,34 +614,34 @@ addVar <- function(Y,
       v <- rnorm(dim_x,0,sigma_v)
       binary_param_propose[to_add] = v
       if (length(curspline_ext) == 0) {
-        mod_propose = glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_propose]), family = gaussian())
+        mod_propose = stats::glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_propose]))
 
         if (length(curbinary_ext) == 0) {
-          mod_prev = glm(Y ~ trt, family = gaussian())
+          mod_prev = stats::glm(Y ~ trt)
         } else {
-          mod_prev = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]), family = gaussian())
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]))
           binary_param_propose[curbinary_ext] = binary_param_i[curbinary_ext] -
-            coef(mod_prev)[-c(1,2)] +
-            coef(mod_propose)[setdiff(3:(length(curbinary_propose)+2),2+index_add)]
+            stats::coef(mod_prev)[-c(1,2)] +
+            stats::coef(mod_propose)[setdiff(3:(length(curbinary_propose)+2),2+index_add)]
         }
       } else {
-        mod_propose = glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_propose]) +
-                           do.call(cbind, spline_mod_mat[curspline_ext]), family = gaussian())
+        mod_propose = stats::glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_propose]) +
+                           do.call(cbind, spline_mod_mat[curspline_ext]))
 
         if (length(curbinary_ext) == 0) {
-          mod_prev = glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]), family = gaussian())
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]))
         } else {
-          mod_prev = glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_ext]) +
-                             do.call(cbind, spline_mod_mat[curspline_ext]), family = gaussian())
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_ext]) +
+                             do.call(cbind, spline_mod_mat[curspline_ext]))
           binary_param_propose[curbinary_ext] = binary_param_i[curbinary_ext] -
-            coef(mod_prev)[3:(length(curbinary_ext)+2)] +
-            coef(mod_propose)[setdiff(3:(length(curbinary_ext)+2),2+index_add)]
+            stats::coef(mod_prev)[3:(length(curbinary_ext)+2)] +
+            stats::coef(mod_propose)[setdiff(3:(length(curbinary_ext)+2),2+index_add)]
         }
 
-        spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
+        spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
                                              spline_mod_mat,
                                              curspline_ext)
-        spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1:(length(curbinary_propose)+2))],
+        spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1:(length(curbinary_propose)+2))],
                                                 spline_mod_mat,
                                                 curspline_ext)
 
@@ -651,7 +652,7 @@ addVar <- function(Y,
         }
       }
 
-      binary_param_propose[to_add] = v + coef(mod_propose)[2+index_add]
+      binary_param_propose[to_add] = v + stats::coef(mod_propose)[2+index_add]
     } else {
       curspline_propose =  c(curspline_ext, to_add)
       dim_x = length(spline_param_i[[to_add]])
@@ -659,17 +660,17 @@ addVar <- function(Y,
 
       v <- rnorm(dim_x,0,sigma_v)
       if (length(curbinary_ext) == 0) {
-        mod_propose = glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_propose]), family = gaussian())
+        mod_propose = stats::glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_propose]))
 
-        spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1,2)],
+        spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1,2)],
                                              spline_mod_mat,
                                              curspline_propose)
 
         if (length(curspline_ext) == 0) {
-          mod_prev = glm(Y ~ trt, family = gaussian())
+          mod_prev = stats::glm(Y ~ trt)
         } else {
-          mod_prev = glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]), family = gaussian())
-          spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1,2)],
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]))
+          spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1,2)],
                                                   spline_mod_mat,
                                                   curspline_ext)
 
@@ -681,19 +682,19 @@ addVar <- function(Y,
         }
 
       } else {
-        mod_propose = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) +
-                           do.call(cbind, spline_mod_mat[curspline_propose]), family = gaussian())
+        mod_propose = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) +
+                           do.call(cbind, spline_mod_mat[curspline_propose]))
 
-        spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1:(length(curbinary_ext)+2))],
+        spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1:(length(curbinary_ext)+2))],
                                              spline_mod_mat,
                                              curspline_propose)
 
         if (length(curspline_ext) == 0) {
-          mod_prev = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]), family = gaussian())
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]))
         } else {
-          mod_prev = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) +
-                          do.call(cbind, spline_mod_mat[curspline_ext]), family = gaussian())
-          spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
+          mod_prev = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) +
+                          do.call(cbind, spline_mod_mat[curspline_ext]))
+          spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
                                                   spline_mod_mat,
                                                   curspline_ext)
 
@@ -704,13 +705,13 @@ addVar <- function(Y,
           }
         }
         binary_param_propose[curbinary_ext] = binary_param_i[curbinary_ext] -
-          coef(mod_prev)[3:(length(curbinary_ext)+2)] +
-          coef(mod_propose)[3:(length(curbinary_ext)+2)]
+          stats::coef(mod_prev)[3:(length(curbinary_ext)+2)] +
+          stats::coef(mod_propose)[3:(length(curbinary_ext)+2)]
       }
       spline_param_propose[[to_add]] = v + spline_ols_propose[[to_add]]
     }
 
-    inter_trt_param_propose = inter_trt_param_i - coef(mod_prev)[c(1,2)] + coef(mod_propose)[c(1,2)]
+    inter_trt_param_propose = inter_trt_param_i - stats::coef(mod_prev)[c(1,2)] + stats::coef(mod_propose)[c(1,2)]
     log_prob = logLikelihoodCustom(Y,
                                    trt,
                                    inter_trt_param_propose,
@@ -727,12 +728,12 @@ addVar <- function(Y,
                           spline_param_i,
                           spline_mod_mat,
                           sigma_sq_i) +
-      sum(dnorm(c(inter_trt_param_propose, binary_param_propose, unlist(spline_param_propose)), mean = 0, sd = sigma_B, log = T)) -
-      sum(dnorm(c(inter_trt_param_i, binary_param_i, unlist(spline_param_i)), mean = 0,
+      sum(stats::dnorm(c(inter_trt_param_propose, binary_param_propose, unlist(spline_param_propose)), mean = 0, sd = sigma_B, log = T)) -
+      sum(stats::dnorm(c(inter_trt_param_i, binary_param_i, unlist(spline_param_i)), mean = 0,
                 sd = sigma_B, log = T)) +
       log(lambda_1/(n_cand_vars-n_cur_vars)) +
       log(length(eligibletoadd)) - log(length(eligibletoremove)+1) -
-      sum(dnorm(v,0,sigma_v,log=T))
+      sum(stats::dnorm(v,0,sigma_v,log=T))
 
     curmain_propose = curmain
     curinter_propose = curinter
@@ -742,7 +743,7 @@ addVar <- function(Y,
       curinter_propose = c(sub("_[^_]+$", "", to_add), curinter)
     }
 
-    gamma <- runif(1,0,1)
+    gamma <- stats::runif(1,0,1)
     if (gamma < min(1,exp(log_prob))) {
       # keep track of spline coeffients
       spline_param_i = spline_param_propose
@@ -808,28 +809,29 @@ convertSplineCoefs <- function(spline_coefs,
 #' @param ... Additional arguments related to the current binary and spline parameters.
 #'
 #' @return A list containing the updated variable parameters and acceptance indicator.
+#' @importFrom stats dnorm glm runif coef
 #' @keywords internal
 removeVar <- function(Y,
                       trt,
                       n_cand_vars,
                       n_cur_vars,
-                   sigma_v,
-                   sigma_B,
-                   lambda_1,
-                   eligibletoremove,
-                   eligibletoadd,
-                   curvars_ext,
-                   curmain,
-                   curinter,
-                   curbinary_ext,
-                   curspline_ext,
-                   candbinaryvars_ext,
-                   inter_trt_param_i,
-                   binary_param_i,
-                   binary_mod_mat,
-                   spline_param_i,
-                   spline_mod_mat,
-                   sigma_sq_i) {
+                     sigma_v,
+                     sigma_B,
+                     lambda_1,
+                     eligibletoremove,
+                     eligibletoadd,
+                     curvars_ext,
+                     curmain,
+                     curinter,
+                     curbinary_ext,
+                     curspline_ext,
+                     candbinaryvars_ext,
+                     inter_trt_param_i,
+                     binary_param_i,
+                     binary_mod_mat,
+                     spline_param_i,
+                     spline_mod_mat,
+                     sigma_sq_i) {
   if (length(eligibletoremove) > 0) {
     to_remove = sample_(eligibletoremove)
     spline_param_propose = spline_param_i
@@ -848,34 +850,34 @@ removeVar <- function(Y,
       if (length(curspline_ext) == 0) {
         binary_mod_mat_prev = binary_mod_mat[curbinary_ext]
         index_remove = which(to_remove == curbinary_ext)
-        mod_prev = glm(Y ~ trt + do.call(cbind, binary_mod_mat_prev),family = gaussian())
+        mod_prev = stats::glm(Y ~ trt + do.call(cbind, binary_mod_mat_prev))
 
         if (length(curbinary_propose) == 0) {
-          mod_propose = glm(Y ~ trt,family = gaussian())
+          mod_propose = stats::glm(Y ~ trt)
         } else {
-          mod_propose = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_propose]),family = gaussian())
+          mod_propose = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_propose]))
           binary_param_propose[curbinary_propose] = binary_param_i[curbinary_propose] -
-            coef(mod_prev)[setdiff(3:(length(curbinary_ext)+2),2+index_remove)] +
-            coef(mod_propose)[-c(1,2)]
+            stats::coef(mod_prev)[setdiff(3:(length(curbinary_ext)+2),2+index_remove)] +
+            stats::coef(mod_propose)[-c(1,2)]
         }
       } else {
-        mod_prev = glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_ext]) + do.call(cbind, spline_mod_mat[curspline_ext]),family = gaussian())
+        mod_prev = stats::glm(Y ~ trt + do.call(cbind, binary_mod_mat[curbinary_ext]) + do.call(cbind, spline_mod_mat[curspline_ext]))
 
         if (length(curbinary_propose) == 0) {
-          mod_propose = glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]),family = gaussian())
+          mod_propose = stats::glm(Y ~ trt + do.call(cbind, spline_mod_mat[curspline_ext]))
         } else {
-          mod_propose = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_propose]) +
-                             do.call(cbind, spline_mod_mat[curspline_ext]),family = gaussian())
+          mod_propose = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_propose]) +
+                             do.call(cbind, spline_mod_mat[curspline_ext]))
           index_remove = which(to_remove == curbinary_ext)
           binary_param_propose[curbinary_propose] = binary_param_i[curbinary_propose] -
-            coef(mod_prev)[setdiff(3:(length(curbinary_ext)+2),2+index_remove)] +
-            coef(mod_propose)[3:(length(curbinary_propose)+2)]
+            stats::coef(mod_prev)[setdiff(3:(length(curbinary_ext)+2),2+index_remove)] +
+            stats::coef(mod_propose)[3:(length(curbinary_propose)+2)]
         }
 
-        spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
+        spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
                                          spline_mod_mat,
                                          curspline_ext)
-        spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1:(length(curbinary_propose)+2))],
+        spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1:(length(curbinary_propose)+2))],
                                          spline_mod_mat,
                                          curspline_ext)
 
@@ -895,18 +897,18 @@ removeVar <- function(Y,
 
       if (length(curbinary_ext) == 0) {
         mod_mat_prev = do.call(cbind, spline_mod_mat[curspline_ext])
-        mod_prev = glm(Y ~ trt + mod_mat_prev, family = gaussian())
+        mod_prev = stats::glm(Y ~ trt + mod_mat_prev)
 
-        spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1,2)],
+        spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1,2)],
                                              spline_mod_mat,
                                              curspline_ext)
 
         if (length(curspline_propose) == 0) {
-          mod_propose = glm(Y ~ trt, family = gaussian())
+          mod_propose = stats::glm(Y ~ trt)
         } else {
           mod_mat_propose = do.call(cbind, spline_mod_mat[curspline_propose])
-          mod_propose = glm(Y ~ trt + mod_mat_propose, family = gaussian())
-          spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1,2)],
+          mod_propose = stats::glm(Y ~ trt + mod_mat_propose)
+          spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1,2)],
                                                   spline_mod_mat,
                                                   curspline_propose)
 
@@ -920,18 +922,18 @@ removeVar <- function(Y,
       } else {
         mod_mat_prev = do.call(cbind, spline_mod_mat[curspline_ext])
 
-        mod_prev = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) + mod_mat_prev, family = gaussian())
+        mod_prev = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]) + mod_mat_prev)
 
-        spline_ols_prev = convertSplineCoefs(coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
+        spline_ols_prev = convertSplineCoefs(stats::coef(mod_prev)[-c(1:(length(curbinary_ext)+2))],
                                              spline_mod_mat,
                                              curspline_ext)
 
         if (length(curspline_propose) == 0) {
-          mod_propose = glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]), family = gaussian())
+          mod_propose = stats::glm(Y ~ trt + do.call(cbind,binary_mod_mat[curbinary_ext]))
         } else {
-          mod_propose = glm(Y ~ trt +  do.call(cbind,binary_mod_mat[curbinary_ext]) +
-                             do.call(cbind, spline_mod_mat[curspline_propose]), family = gaussian())
-          spline_ols_propose = convertSplineCoefs(coef(mod_propose)[-c(1:(length(curbinary_ext)+2))],
+          mod_propose = stats::glm(Y ~ trt +  do.call(cbind,binary_mod_mat[curbinary_ext]) +
+                             do.call(cbind, spline_mod_mat[curspline_propose]))
+          spline_ols_propose = convertSplineCoefs(stats::coef(mod_propose)[-c(1:(length(curbinary_ext)+2))],
                                                   spline_mod_mat,
                                                   curspline_propose)
           for (m in 1:length(curspline_propose)) {
@@ -943,13 +945,13 @@ removeVar <- function(Y,
 
         }
         binary_param_propose[curbinary_ext] = binary_param_i[curbinary_ext] -
-          coef(mod_prev)[3:(length(curbinary_ext)+2)] +
-          coef(mod_propose)[3:(length(curbinary_ext)+2)]
+          stats::coef(mod_prev)[3:(length(curbinary_ext)+2)] +
+          stats::coef(mod_propose)[3:(length(curbinary_ext)+2)]
       }
       spline_param_propose[[to_remove]] = rep(0,dim_x)
     }
 
-    inter_trt_param_propose = inter_trt_param_i - coef(mod_prev)[c(1,2)] + coef(mod_propose)[c(1,2)]
+    inter_trt_param_propose = inter_trt_param_i - stats::coef(mod_prev)[c(1,2)] + stats::coef(mod_propose)[c(1,2)]
     #inter_trt_param_propose = inter_trt_param_i
     log_prob = logLikelihoodCustom(Y,
                                    trt,
@@ -967,12 +969,12 @@ removeVar <- function(Y,
                           spline_param_i,
                           spline_mod_mat,
                           sigma_sq_i) +
-      sum(dnorm(c(inter_trt_param_propose, binary_param_propose, unlist(spline_param_propose)), mean = 0, sd = sigma_B, log = T)) -
-      sum(dnorm(c(inter_trt_param_i, binary_param_i, unlist(spline_param_i)), mean = 0,
+      sum(stats::dnorm(c(inter_trt_param_propose, binary_param_propose, unlist(spline_param_propose)), mean = 0, sd = sigma_B, log = T)) -
+      sum(stats::dnorm(c(inter_trt_param_i, binary_param_i, unlist(spline_param_i)), mean = 0,
                 sd = sigma_B, log = T)) +
       log((n_cand_vars-n_cur_vars + 1)/lambda_1) +
       log(length(eligibletoremove)) - log(length(eligibletoadd)+1) +
-      sum(dnorm(v,0,sigma_v,log=T))
+      sum(stats::dnorm(v,0,sigma_v,log=T))
 
     curmain_propose = curmain
     curinter_propose = curinter
@@ -982,7 +984,7 @@ removeVar <- function(Y,
       curinter_propose =  setdiff(curinter, sub("_[^_]+$", "", to_remove))
     }
 
-    gamma <- runif(1,0,1)
+    gamma <- stats::runif(1,0,1)
     if (gamma < min(1,exp(log_prob))) {
       # keep track of spline coefficients
       spline_param_i = spline_param_propose
