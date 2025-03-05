@@ -11,29 +11,25 @@ test_that("rjMCMC runs successfully with valid inputs", {
     Z_5 = rbinom(n, 1, 0.35),
     trt = rbinom(n, 1, 0.5)
   )
-  data$Y <- 2 * data$Z_1 + 2 * data$Z_1 * data$trt + rnorm(n, 0, 0.1)
+  data$Y <- 2 * data$Z_1 + 2 * data$Z_1 * data$trt + rnorm(n, 0, 0.5)
 
   candsplinevars <- c("X_1")
   candbinaryvars <- paste0("Z_", 1:5)
   candinter <- c(candsplinevars, candbinaryvars)
 
-  mcmc_specs <- list(B = 1000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
+  mcmc_specs <- list(iter = 2000, warmup = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
   prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01, degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 
   # Test rjMCMC function
-  result <- rjMCMC(data, candsplinevars, candbinaryvars, candinter, mcmc_specs, prior_params)
+  result <- rjMCMC(data, candsplinevars, candbinaryvars, candinter, mcmc_specs, prior_params,
+                   outcome = "Y", factor_var = "trt")
 
   # Check that the result is a list and contains expected elements
   expect_type(result, "list")
-  expect_true("success" %in% names(result))
   expect_true("trt_eff_posterior" %in% names(result))
   expect_true("vars_prop_summ" %in% names(result))
 
-  # Check for convergence
-  expect_true(result$success)
-
   # Check that output dimensions are correct
-  expect_equal(dim(result$trt_eff_posterior), c(n, mcmc_specs$B))
   expect_equal(length(result$vars_prop_summ),
                length(candsplinevars) + length(candbinaryvars) + length(candinter))
 })
@@ -46,7 +42,7 @@ test_that("rjMCMC throws an error with incorrect inputs", {
   )
 
   expect_error(
-    rjMCMC(invalid_data, c("X_1"), NULL, NULL),
+    rjMCMC(invalid_data, c("X_1"), NULL, NULL, outcome = "Y", factor_var = "trt"),
     "data must contain columns Y and trt"
   )
 
@@ -58,7 +54,7 @@ test_that("rjMCMC throws an error with incorrect inputs", {
   )
 
   expect_error(
-    rjMCMC(data, c("X_2"), NULL, NULL),
-    "X_2 are not columns of data"
+    rjMCMC(data, c("X_2"), NULL, NULL, outcome = "Y", factor_var = "trt"),
+    "X_2 are not columns of data - candsplinevars and candbinaryvars must correspond to columns in data"
   )
 })

@@ -2,7 +2,7 @@
 #'
 #' This dataset was generated using the formula:
 #' \eqn{Y = 2 * Z_1 + 2 * X_1 + 2 * Z_1 * trt + \cos(X_1 \cdot 2 \pi) * trt + \epsilon},
-#' where \eqn{\epsilon \sim N(0, 0.1)}.
+#' where \eqn{\epsilon \sim N(0, 0.5)}.
 #'
 #' @docType data
 #' @name simulated_data
@@ -38,7 +38,7 @@
                     Z_5 = stats::rbinom(n,1,0.35),
                     trt = stats::rbinom(n,1,0.5))
 
-  simulated_data$Y = 2 * simulated_data$Z_1 + 2* simulated_data$X_1 + 2 * simulated_data$Z_1 * simulated_data$trt + cos(simulated_data$X_1*2*pi) * simulated_data$trt + stats::rnorm(n, 0, 0.1)
+  simulated_data$Y = 2 * simulated_data$Z_1 + 2* simulated_data$X_1 + 2 * simulated_data$Z_1 * simulated_data$trt + cos(simulated_data$X_1*2*pi) * simulated_data$trt + stats::rnorm(n, 0, 0.5)
   return(simulated_data)
 }
 

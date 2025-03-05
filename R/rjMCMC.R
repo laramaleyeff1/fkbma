@@ -10,20 +10,22 @@
 #'
 #' @param data A data frame containing the observations, including the following columns:
 #' \describe{
-#'   \item{trt}{Group indicator (=1 for experimental group; =0 for control group).}
-#'   \item{Y}{Continuous-valued outcome.}
+#'   \item{factor_var}{Exposure group binary indicator.}
+#'   \item{outcome}{Continuous-valued outcome.}
 #'   \item{candsplinevars}{All candidate spline variables as described in `candsplinevars`.}
 #'   \item{candbinaryvars}{All candidate binary variables as described in `candbinaryvars`.}
 #' }
 #' @param candsplinevars A vector of names for continuous predictive candidate variables (default = NULL).
 #' @param candbinaryvars A vector of names for binary predictive candidate variables (default = NULL).
 #' @param candinter A vector indicating which of the candidate variables are tailoring (default = NULL).
+#' @param outcome A string indicating the name of the continuous outcome variable in data.
+#' @param factor_var A string indicating the name of the binary exposure variable in data.
 #' @param mcmc_specs A list containing:
 #' \describe{
-#'   \item{B}{Number of posterior samples (default = 2000).}
-#'   \item{burnin}{Number of burn-in samples (default = 10000).}
-#'   \item{thin}{Thinning parameter (default = 5).}
-#'   \item{chain}{Number of chains (default = 1).}
+#'   \item{iter}{Number of total iterations per chain (including warmup; default = 4000).}
+#'   \item{warmup}{Number of warmup/burn-in samples per chain (default = 2000).}
+#'   \item{thin}{Thinning parameter (default = 1).}
+#'   \item{chain}{Number of chains (default = 4).}
 #'   \item{sigma_v}{Proposal variance for "jump" terms (default = 0.1).}
 #'   \item{bma}{Boolean indicating whether to include Bayesian model averaging step (default = TRUE).}
 #' }
@@ -41,9 +43,6 @@
 #'
 #' @return An rjMCMC object with the following components:
 #'   \describe{
-#'     \item{success}{Logical indicating whether the MCMC chains converged based on Geweke diagnostics.}
-#'     \item{geweke.trt_eff_posterior}{Geweke diagnostic for the posterior treatment effects across the dataset.}
-#'     \item{geweke.sd}{Geweke diagnostic for the posterior distribution of residual variance (sigma squared).}
 #'     \item{accept_var}{Matrix indicating the acceptance of variable inclusion/removal for each iteration.}
 #'     \item{accept_add_knot}{Matrix indicating acceptance of knot addition for each spline term across iterations.}
 #'     \item{accept_remove_knot}{Matrix indicating acceptance of knot removal for each spline term across iterations.}
@@ -72,7 +71,6 @@
 #'
 #' @importFrom stats glm sigma quantile rgamma rnorm
 #' @importFrom splines bs
-#' @importFrom coda geweke.diag
 #' @importFrom MASS mvrnorm
 #' @importFrom utils setTxtProgressBar setTxtProgressBar
 #'
@@ -85,18 +83,16 @@
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' }
 #' @export
 rjMCMC <- function(data,
                    candsplinevars,
                    candbinaryvars,
                    candinter,
+                   outcome,
+                   factor_var,
                    mcmc_specs = NULL,
                    prior_params = NULL) {
 
@@ -106,10 +102,10 @@ rjMCMC <- function(data,
   }
 
   default_mcmc_specs <- list(
-    B = 2000,
-    burnin = 10000,
-    thin = 5,
-    chains = 1,
+    iter = 4000,
+    warmup = NULL,  # Placeholder for later assignment
+    thin = 1,
+    chains = 4,
     sigma_v = 0.1,
     bma = TRUE
   )
@@ -119,12 +115,21 @@ rjMCMC <- function(data,
     mcmc_specs <- default_mcmc_specs
   }
 
+  # Set warmup to iter / 2 if it's NULL
+  if (is.null(mcmc_specs$warmup)) {
+    mcmc_specs$warmup <- mcmc_specs$iter / 2
+  }
+
   # Check if each parameter is missing, if so, set it to the default value
   for (param in names(default_mcmc_specs)) {
     if (is.null(mcmc_specs[[param]])) {
       mcmc_specs[[param]] <- default_mcmc_specs[[param]]
       message(paste("Setting", param, "to default of", default_mcmc_specs[[param]]))
     }
+  }
+
+  if(mcmc_specs$warmup > mcmc_specs$iter) {
+    stop("Error: warmup should not be greater than iter")
   }
 
   default_prior_params <- list(
@@ -151,9 +156,12 @@ rjMCMC <- function(data,
     }
   }
 
-  if (!all(c('Y', 'trt') %in% colnames(data))) {
-    stop("data must contain columns Y and trt")
+  if (!all(c(outcome, factor_var) %in% colnames(data))) {
+    stop(paste("data must contain columns", outcome, "and", factor_var))
   }
+
+  data$Y = data[,outcome]
+  data$trt = data[,factor_var]
 
   if (!all(c(candsplinevars,candbinaryvars) %in% colnames(data))) {
     stop(paste0(paste(setdiff(c(candsplinevars,candbinaryvars),colnames(data)),collapse=", "), " are not columns of data - candsplinevars and candbinaryvars must correspond to columns in data"))
@@ -164,12 +172,12 @@ rjMCMC <- function(data,
   }
 
   if (!(all(data$trt %in% c(0, 1)) && length(unique(data$trt)) == 2)) {
-    stop("data$trt must be binary")
+    stop(paste(factor_var, "must be binary"))
   }
 
-  B = mcmc_specs$B
-  B_per_chain = B/mcmc_specs$chains
-  burnin = mcmc_specs$burnin
+  B_per_chain = ceiling((mcmc_specs$iter - mcmc_specs$warmup) / mcmc_specs$thin)
+  B = B_per_chain * mcmc_specs$chains
+  burnin = mcmc_specs$warmup
   thin = mcmc_specs$thin
   bma = mcmc_specs$bma
   sigma_v = mcmc_specs$sigma_v
@@ -197,7 +205,7 @@ rjMCMC <- function(data,
   candsplineinter = intersect(candsplinevars, candinter)
   candmain = c(candsplinevars,candbinaryvars)
 
-  inter_trt_param_all = matrix(nrow = B, ncol = 2, dimnames = list(NULL,c("intercept", "trt")))
+  inter_trt_param_all = matrix(nrow = B, ncol = 2, dimnames = list(NULL,c("intercept",factor_var)))
   binary_param_all = matrix(nrow = B, ncol = length(candbinaryvars_ext), dimnames = list(NULL,candbinaryvars_ext))
   sigma_sq_all = array(dim = c(B, 1))
   splines_fitted_all = list()
@@ -599,7 +607,7 @@ rjMCMC <- function(data,
 ############################################ MCMC diagnostics ###############################################
   rename_vars <- function(var_name) {
     var_name <- gsub("_main$", "", var_name)  # Remove "_main"
-    var_name <- gsub("_inter$", ":trt", var_name)  # Replace "_inter" with ":trt"
+    var_name <- gsub("_inter$", paste0(":",factor_var), var_name)  # Replace "_inter" with ":trt"
     return(var_name)
   }
   colnames(binary_param_all) <- unname(sapply(colnames(binary_param_all), rename_vars))
@@ -614,39 +622,28 @@ rjMCMC <- function(data,
   trt_eff_posterior = t(matrix(1,nrow=nrow(data)) %*% t(matrix(inter_trt_param_all[,2])))
   if (length(candsplineinter) > 0) {
     for (m in 1:length(candsplineinter)) {
-      trt_eff_posterior = trt_eff_posterior + splines_fitted_all[[paste0(candsplineinter[m],":trt")]]
+      trt_eff_posterior = trt_eff_posterior + splines_fitted_all[[paste0(candsplineinter[m],paste0(":",factor_var))]]
     }
   }
 
   candbinaryinter = intersect(candbinaryvars,candinter)
   if (length(candbinaryinter) > 0) {
     trt_eff_posterior = trt_eff_posterior +
-      binary_param_all[,paste0(candbinaryinter,":trt")] %*% t(as.matrix(data[,candbinaryinter]))
+      binary_param_all[,paste0(candbinaryinter,paste0(":",factor_var))] %*% t(as.matrix(data[,candbinaryinter]))
   }
 
-  geweke.trt_eff_posterior <- rep(NA, nrow(data))
-  for (t in 1:nrow(data)) {
-    geweke.trt_eff_posterior[t] <- coda::geweke.diag(trt_eff_posterior[,t], frac1=0.25, frac2=0.25)[[1]]
-  }
-  geweke.sd <- coda::geweke.diag(sigma_sq_all, frac1=0.25, frac2=0.25)[[1]]
-
-  # Assess convergence
-  geweke.conv <- !(max(abs(geweke.trt_eff_posterior))>4 | max(abs(geweke.sd))>4)
 
   vars_prop_summ = colMeans(vars_prop_all)
   names(vars_prop_summ) = colnames(vars_prop_all)
 
   obj <- list(
-    success = geweke.conv,
-    geweke.trt_eff_posterior = geweke.trt_eff_posterior,
-    geweke.sd = geweke.sd,
     accept_var = accept_var_all,
     accept_add_knot = accept_add_knot_all,
     accept_remove_knot = accept_remove_knot_all,
     accept_move_knot = accept_move_knot_all,
     splines_fitted = splines_fitted_all,
     binary_param = binary_param_all,
-    inter_trt_param = inter_trt_param_all,
+    fixed_param = inter_trt_param_all,
     sigma_sq = sigma_sq_all,
     vars_prop = vars_prop_all,
     vars_prop_summ = vars_prop_summ,
@@ -657,6 +654,8 @@ rjMCMC <- function(data,
     candsplinevars = candsplinevars,
     candbinaryvars = candbinaryvars,
     candinter = candinter,
+    outcome = outcome,
+    factor_var = factor_var,
     mcmc_specs = mcmc_specs,
     prior_params = prior_params)
   class(obj) <- c("rjMCMC", class(obj))

@@ -16,7 +16,7 @@ A data frame with estimates, lower, and upper bounds of the credible intervals.
 }
 \description{
 This function calculates the posterior mean and credible intervals for parameters
-from the rjMCMC results, including both intercept/treatment parameters and binary parameters.
+from the rjMCMC results, including both intercept/exposure parameters and binary parameters.
 The credible intervals are computed based on the specified confidence level.
 }
 \examples{
@@ -28,12 +28,9 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 credint(results)
 }
 }

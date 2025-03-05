@@ -9,7 +9,7 @@
   ...,
   variables = NULL,
   sample_type = "fitted",
-  effect_type = "treatment_effect",
+  effect_type = "exposure_effect",
   plot_type = "cred",
   level = 0.95,
   aux_vars = list(),
@@ -28,9 +28,9 @@
 "fitted" and "predictive" are compatible with \code{plot_type = "cred"}.
 "estimand" is compatible with \code{plot_type = "hist"} or "trace" (only used for individual parameter trajectories).}
 
-\item{effect_type}{Character string indicating the effect type: "treatment_effect" or "outcome".
-For "treatment_effect", the function plots the fitted or predictive effect of treatment; for "outcome", it plots
-outcome values without interaction with treatment.}
+\item{effect_type}{Character string indicating the effect type: "exposure_effect" or "outcome".
+For "exposure_effect", the function plots the fitted or predictive effect of exposure; for "outcome", it plots
+outcome values without interaction with exposure.}
 
 \item{plot_type}{Character string specifying the plot type: "cred" for credible interval plots, or "hist"/"trace" for histogram or trace plots
 of individual parameters (only for \code{sample_type = "estimand"}).}
@@ -56,14 +56,14 @@ The function is flexible for various combinations of \code{sample_type}, \code{e
 \itemize{
 \item For \code{sample_type = "estimand"}, only \code{plot_type = "hist"} or "trace" is allowed, as these are designed to visualize the posterior distribution
 or MCMC trajectory of individual parameters. Parameters like \code{intercept}, \code{trt}, and \code{sigma} are agnostic to \code{effect_type} as they
-do not interact with treatment.
+do not interact with exposure.
 \item \code{plot_type = "cred"} is designed for use with \code{sample_type = "fitted"} or "predictive" and shows credible intervals for the outcome (y-axis)
-across biomarker values (x-axis) by covariate pattern. \code{effect_type} controls whether the treatment effect or main effect is displayed.
+across biomarker values (x-axis) by covariate pattern. \code{effect_type} controls whether the exposure effect or main effect is displayed.
 }
 \item \strong{Effect Types}:
 \itemize{
-\item \code{outcome} plots either the fitted or predictive values without treatment interaction, allowing for treatment (\code{trt}) values to be specified.
-\item \code{treatment_effect} plots the interaction of the treatment effect across different covariate patterns.
+\item \code{outcome} plots either the fitted or predictive values without exposure interaction, allowing for exposure (\code{trt}) values to be specified.
+\item \code{exposure_effect} plots the interaction of the exposure effect across different covariate patterns.
 }
 }
 }
@@ -76,13 +76,9 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
-plot(results, sample_type = "fitted", effect_type = "treatment_effect", plot_type = "cred")
+                  outcome = "Y", factor_var = "trt")
+plot(results, sample_type = "fitted", effect_type = "exposure_effect", plot_type = "cred")
 plot(results, sample_type = "estimand", plot_type = "hist")
 }
 }

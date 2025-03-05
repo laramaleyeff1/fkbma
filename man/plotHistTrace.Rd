@@ -8,7 +8,7 @@ plotHistTrace(
   results,
   variables = NULL,
   sample_type = "fitted",
-  effect_type = "treatment_effect",
+  effect_type = "exposure_effect",
   plot_type = "cred",
   aux_vars = list(),
   facet_by = NULL
@@ -46,12 +46,12 @@ displaying the posterior distributions or sampling trajectories of specified var
 \item For \code{sample_type = "estimand"}, only \code{plot_type = "hist"} or "trace" is compatible, as it represents the posterior
 distribution or MCMC trajectory of individual parameters.
 \item For \code{sample_type = "fitted"} or \code{"predictive"}, this function plots either the main effect
-(no interaction with treatment) or treatment effect for an individual using auxiliary variable values.
+(no interaction with exposure) or exposure effect for an individual using auxiliary variable values.
 }
 \item \strong{Effect Types}:
 \itemize{
-\item For \code{sample_type = "fitted"} or \code{"predictive"}, \code{"outcome"} generates plots without treatment interaction,
-and \code{"treatment_effect"} plots the interaction effect with treatment.
+\item For \code{sample_type = "fitted"} or \code{"predictive"}, \code{"outcome"} generates plots without exposure interaction,
+and \code{"exposure_effect"} plots the interaction effect with exposure.
 }
 }
 }

@@ -19,23 +19,23 @@ threshold for selecting covariates. Default is \code{0.1}.}
 }
 \value{
 A list with the following components:
-\item{quantiles}{A vector of quantile values for the treatment effect in the new dataset.}
-\item{is_effective_subspace}{A logical vector indicating whether the treatment effect is
+\item{quantiles}{A vector of quantile values for the exposure effect in the new dataset.}
+\item{is_effective_subspace}{A logical vector indicating whether the exposure effect is
 positive in the effective subspace.}
 }
 \description{
-This function identifies the "effective subspace" where treatment is effective
+This function identifies the "effective subspace" where exposure is effective
 based on posterior inference results from the FK-BMA model. It analyzes interaction terms
-between treatment and covariates, allowing for both binary and continuous variables.
+between exposure and covariates, allowing for both binary and continuous variables.
 }
 \details{
 \itemize{
-\item The function computes the posterior treatment effect for each observation in the
-dataset using the \code{fittedTrtEff} function and evaluates its quantiles at the
+\item The function computes the posterior exposure effect for each observation in the
+dataset using the \code{fittedExposureEff} function and evaluates its quantiles at the
 specified \code{alpha} level.
 \item Binary variables with high posterior inclusion probabilities (PIP) are used to define
 subgroups, and the corresponding effective subspaces for a continuous variable
-are identified by checking where the treatment effect quantiles are strictly positive.
+are identified by checking where the exposure effect quantiles are strictly positive.
 \item If the number of binary variables is \code{<= 3} and there is exactly one continuous variable,
 the function describes the effective subspace in terms of disjoint intervals.
 \item For more complex cases, a warning is issued suggesting alternative methods such as
@@ -51,12 +51,8 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 getEffectiveSubspace(results)
 }
 }

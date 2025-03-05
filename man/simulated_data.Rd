@@ -23,7 +23,7 @@ data(simulated_data)
 \description{
 This dataset was generated using the formula:
 \eqn{Y = 2 * Z_1 + 2 * X_1 + 2 * Z_1 * trt + \cos(X_1 \cdot 2 \pi) * trt + \epsilon},
-where \eqn{\epsilon \sim N(0, 0.1)}.
+where \eqn{\epsilon \sim N(0, 0.5)}.
 }
 \examples{
 data(simulated_data)

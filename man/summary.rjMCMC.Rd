@@ -4,13 +4,12 @@
 \alias{summary.rjMCMC}
 \title{Summarize Results from Reversible Jump MCMC (rjMCMC)}
 \usage{
-\method{summary}{rjMCMC}(object, digits = 2, level = 0.95, ...)
+\method{summary}{rjMCMC}(object, digits = 3, level = 0.95, pip_cutoff = 0.1, ...)
 }
 \arguments{
 \item{object}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, which includes:
 \describe{
-\item{success}{Logical indicating whether the sampler converged based on Geweke diagnostics.}
-\item{inter_trt_param}{Matrix of posterior samples for treatment intercept and main effect.}
+\item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
 \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
 \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
 \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
@@ -20,12 +19,15 @@
 \item{candsplinevars}{Names of continuous candidate spline variables.}
 \item{candbinaryvars}{Names of binary candidate variables.}
 \item{candinter}{Names of interaction terms, which can include spline variables.}
-\item{mcmc_specs}{MCMC sampler specifications, including the number of samples, burn-in, thinning, and chains.}
+\item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
 }}
 
-\item{digits}{Number of digits in summary output}
+\item{digits}{Number of digits in summary output (default = 3)}
 
-\item{level}{Credible interval level}
+\item{level}{Credible interval level (default = 0.95)}
+
+\item{pip_cutoff}{Posterior inclusion probability cutoff for reporting effective sample size
+and R-squared (default = 0.10)}
 
 \item{...}{Additional arguments to be passed to other methods or functions.}
 }
@@ -35,10 +37,10 @@ Prints the following summary information:
 \item{Model Formula}{The model formula with spline terms wrapped in \code{fbs()}, indicating free-knot B-splines, and interaction terms appropriately formatted.}
 \item{Convergence Diagnostics}{Reports any convergence issues based on Geweke diagnostics.}
 \item{MCMC Sampler Arguments}{Displays MCMC sampler arguments, including the number of posterior samples, burn-in, thinning, and chains.}
-\item{Parameter Estimates}{Posterior mean, standard error, 95\% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, treatment intercept, and treatment effect.}
+\item{Parameter Estimates}{Posterior mean, standard error, 95\% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, exposure intercept, and exposure effect.}
 \item{Gaussian Family Parameters}{Posterior summary for the residual standard error (sigma).}
 \item{Posterior Inclusion Probabilities for Splines}{Prints the posterior inclusion probabilities for spline terms.}
-\item{Plots for Fitted Treatment Effects}{Plots the mean and 95\% credible intervals for each spline term vs fitted treatment effects.}
+\item{Plots for Fitted Exposure Effects}{Plots the mean and 95\% credible intervals for each spline term vs fitted exposure effects.}
 }
 }
 \description{
@@ -52,7 +54,7 @@ The function produces detailed summaries similar to those from \code{brms}, incl
 diagnostics, estimates, posterior inclusion probabilities, and spline effects. The spline terms
 are wrapped in \code{fbs()} notation, indicating the use of free-knot B-splines in the model. If the sampler
 did not converge, a warning is issued. The function also allows the user to view diagnostic plots for fitted
-treatment effects.
+exposure effects.
 }
 \examples{
 \donttest{
@@ -63,12 +65,8 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 summary(results)
 }
 

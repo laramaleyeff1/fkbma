@@ -7,15 +7,28 @@
 \method{coef}{rjMCMC}(object, ...)
 }
 \arguments{
-\item{object}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, including posterior samples.}
+\item{object}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, which includes:
+\describe{
+\item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+\item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+\item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+\item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+\item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+\item{data_fit}{Original dataset used in the \code{rjMCMC} procedure.}
+\item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+\item{candsplinevars}{Names of continuous candidate spline variables.}
+\item{candbinaryvars}{Names of binary candidate variables.}
+\item{candinter}{Names of interaction terms, which can include spline variables.}
+\item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+}}
 
 \item{...}{Additional arguments to be passed to other methods or functions.}
 }
 \value{
-A numeric vector containing the posterior mean of the intercept, treatment, and binary parameters.
+A numeric vector containing the posterior mean of the intercept, exposure, and binary parameters.
 }
 \description{
-This function extracts the posterior means of the intercept, treatment parameters,
+This function extracts the posterior means of the intercept, exposure parameters,
 and binary parameters from the results of an rjMCMC model.
 }
 \examples{
@@ -27,12 +40,9 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 coef(results)
 }
 }

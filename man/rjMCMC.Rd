@@ -9,6 +9,8 @@ rjMCMC(
   candsplinevars,
   candbinaryvars,
   candinter,
+  outcome,
+  factor_var,
   mcmc_specs = NULL,
   prior_params = NULL
 )
@@ -16,8 +18,8 @@ rjMCMC(
 \arguments{
 \item{data}{A data frame containing the observations, including the following columns:
 \describe{
-\item{trt}{Group indicator (=1 for experimental group; =0 for control group).}
-\item{Y}{Continuous-valued outcome.}
+\item{factor_var}{Exposure group binary indicator.}
+\item{outcome}{Continuous-valued outcome.}
 \item{candsplinevars}{All candidate spline variables as described in \code{candsplinevars}.}
 \item{candbinaryvars}{All candidate binary variables as described in \code{candbinaryvars}.}
 }}
@@ -28,12 +30,16 @@ rjMCMC(
 
 \item{candinter}{A vector indicating which of the candidate variables are tailoring (default = NULL).}
 
+\item{outcome}{A string indicating the name of the continuous outcome variable in data.}
+
+\item{factor_var}{A string indicating the name of the binary exposure variable in data.}
+
 \item{mcmc_specs}{A list containing:
 \describe{
-\item{B}{Number of posterior samples (default = 2000).}
-\item{burnin}{Number of burn-in samples (default = 10000).}
-\item{thin}{Thinning parameter (default = 5).}
-\item{chain}{Number of chains (default = 1).}
+\item{iter}{Number of total iterations per chain (including warmup; default = 4000).}
+\item{warmup}{Number of warmup/burn-in samples per chain (default = 2000).}
+\item{thin}{Thinning parameter (default = 1).}
+\item{chain}{Number of chains (default = 4).}
 \item{sigma_v}{Proposal variance for "jump" terms (default = 0.1).}
 \item{bma}{Boolean indicating whether to include Bayesian model averaging step (default = TRUE).}
 }}
@@ -53,9 +59,6 @@ rjMCMC(
 \value{
 An rjMCMC object with the following components:
 \describe{
-\item{success}{Logical indicating whether the MCMC chains converged based on Geweke diagnostics.}
-\item{geweke.trt_eff_posterior}{Geweke diagnostic for the posterior treatment effects across the dataset.}
-\item{geweke.sd}{Geweke diagnostic for the posterior distribution of residual variance (sigma squared).}
 \item{accept_var}{Matrix indicating the acceptance of variable inclusion/removal for each iteration.}
 \item{accept_add_knot}{Matrix indicating acceptance of knot addition for each spline term across iterations.}
 \item{accept_remove_knot}{Matrix indicating acceptance of knot removal for each spline term across iterations.}
@@ -90,12 +93,8 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 }
 }
 \references{

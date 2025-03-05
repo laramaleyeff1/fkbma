@@ -7,8 +7,7 @@
 #'
 #' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
 #' \describe{
-#'   \item{success}{Logical indicating whether the sampler converged based on Geweke diagnostics.}
-#'   \item{inter_trt_param}{Matrix of posterior samples for treatment intercept and main effect.}
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
 #'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
 #'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
 #'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
@@ -18,10 +17,12 @@
 #'   \item{candsplinevars}{Names of continuous candidate spline variables.}
 #'   \item{candbinaryvars}{Names of binary candidate variables.}
 #'   \item{candinter}{Names of interaction terms, which can include spline variables.}
-#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of samples, burn-in, thinning, and chains.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
 #' }
-#' @param digits Number of digits in summary output
-#' @param level Credible interval level
+#' @param digits Number of digits in summary output (default = 3)
+#' @param level Credible interval level (default = 0.95)
+#' @param pip_cutoff Posterior inclusion probability cutoff for reporting effective sample size
+#' and R-squared (default = 0.10)
 #' @param ... Additional arguments to be passed to other methods or functions.
 #'
 #' @return Prints the following summary information:
@@ -29,17 +30,17 @@
 #'   \item{Model Formula}{The model formula with spline terms wrapped in `fbs()`, indicating free-knot B-splines, and interaction terms appropriately formatted.}
 #'   \item{Convergence Diagnostics}{Reports any convergence issues based on Geweke diagnostics.}
 #'   \item{MCMC Sampler Arguments}{Displays MCMC sampler arguments, including the number of posterior samples, burn-in, thinning, and chains.}
-#'   \item{Parameter Estimates}{Posterior mean, standard error, 95% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, treatment intercept, and treatment effect.}
+#'   \item{Parameter Estimates}{Posterior mean, standard error, 95% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, exposure intercept, and exposure effect.}
 #'   \item{Gaussian Family Parameters}{Posterior summary for the residual standard error (sigma).}
 #'   \item{Posterior Inclusion Probabilities for Splines}{Prints the posterior inclusion probabilities for spline terms.}
-#'   \item{Plots for Fitted Treatment Effects}{Plots the mean and 95% credible intervals for each spline term vs fitted treatment effects.}
+#'   \item{Plots for Fitted Exposure Effects}{Plots the mean and 95% credible intervals for each spline term vs fitted exposure effects.}
 #' }
 #'
 #' @details The function produces detailed summaries similar to those from `brms`, including
 #' diagnostics, estimates, posterior inclusion probabilities, and spline effects. The spline terms
 #' are wrapped in `fbs()` notation, indicating the use of free-knot B-splines in the model. If the sampler
 #' did not converge, a warning is issued. The function also allows the user to view diagnostic plots for fitted
-#' treatment effects.
+#' exposure effects.
 #'
 #' @importFrom stats quantile sd
 #' @importFrom rstan Rhat
@@ -54,18 +55,16 @@
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' summary(results)
 #' }
 #'
 #' @export
-summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
+summary.rjMCMC <- function(object, digits = 3, level = 0.95, pip_cutoff = 0.1,...) {
   results <- object
+  factor_var = results$factor_var
+  outcome = results$outcome
   # Print the formula and data information, with fbs() around spline variables
   cat("Model Information:\n")
   formula_parts <- c()
@@ -85,43 +84,40 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
   if (length(results$candinter) > 0) {
     interaction_terms <- sapply(results$candinter, function(var) {
       if (var %in% results$candsplinevars) {
-        return(paste0("fbs(", var, "):trt"))
+        return(paste0("fbs(", var, "):",factor_var))
       } else {
-        return(paste0(var, ":trt"))
+        return(paste0(var, ":" ,factor_var))
       }
     })
-    formula_parts <- c(formula_parts, "trt", interaction_terms)
+    formula_parts <- c(formula_parts, factor_var, interaction_terms)
   } else {
-    formula_parts <- c(formula_parts, "trt")
+    formula_parts <- c(formula_parts, factor_var)
   }
 
   # Build the formula string
-  formula_string <- paste("Rating ~", paste(formula_parts, collapse = " + "))
+  formula_string <- paste(outcome,"~", paste(formula_parts, collapse = " + "))
   cat("Formula: ", formula_string, "\n")
   cat("Note: fbs() indicates a free-knot B-spline.\n")
   cat("Data: ", deparse(substitute(object$data_fit)), "\n")
   cat("Number of observations: ", nrow(results$data_fit), "\n")
 
-  # Check convergence based on Geweke diagnostics
-  if (!results$success) {
-    warning("The sampler did not converge based on Geweke diagnostics.")
-  }
-
   # Extract sampler arguments
   mcmc_specs <- results$mcmc_specs
   cat("MCMC Sampler Arguments:\n")
-  cat("  - B (total number of posterior samples): ", mcmc_specs$B, "\n")
-  cat("  - Burn-in: ", mcmc_specs$burnin, "\n")
-  cat("  - Thinning: ", mcmc_specs$thin, "\n")
-  cat("  - Chains: ", mcmc_specs$chains, "\n")
+  cat("  - iter: ", mcmc_specs$iter, "\n")
+  cat("  - warmup: ", mcmc_specs$warmup, "\n")
+  cat("  - thin: ", mcmc_specs$thin, "\n")
+  cat("  - chains: ", mcmc_specs$chains, "\n")
 
-  # Create a summary for binary_param, inter_trt_param, and sigma_sq
+  B = ceiling((mcmc_specs$iter - mcmc_specs$warmup) / mcmc_specs$thin)*mcmc_specs$chains
+  # Create a summary for binary_param, fixed_param, and sigma_sq
   cat("\nParameter Estimates:\n")
 
   # Convert matrices to data.frame to ensure column names are preserved
-  combined_params <- data.frame(intercept = results$inter_trt_param[, "intercept"],
-                                trt = results$inter_trt_param[, "trt"],
+  combined_params <- data.frame(intercept = results$fixed_param[, "intercept"],
+                                factor_var = results$fixed_param[, factor_var],
                                 results$binary_param, check.names = FALSE)
+  names(combined_params)[2] = factor_var
 
   # Posterior inclusion probabilities for binary and spline parameters
   vars_prop_summ <- results$vars_prop_summ
@@ -135,7 +131,7 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
   other_pips <- other_pips[order(-other_pips)]  # Sort parameters by posterior inclusion probabilities (descending)
 
   # Rearrange the combined_params so that intercept and trt are first, followed by other parameters in order of PIPs
-  param_order <- c("intercept", "trt", names(other_pips))
+  param_order <- c("intercept", factor_var, names(other_pips))
   combined_params <- combined_params[, param_order]
 
   # Add PIP column to the parameter summary table
@@ -147,13 +143,13 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
     upper_ci <- apply(param_mat, 2, function(x) stats::quantile(x, 1-alpha/2))
 
     rhat <- apply(param_mat, 2, function(x) {
-      chain_matrix <- matrix(x, nrow = mcmc_specs$B, ncol = mcmc_specs$chains, byrow = FALSE)
+      chain_matrix <- matrix(x, nrow = B, ncol = mcmc_specs$chains, byrow = FALSE)
       rstan::Rhat(chain_matrix)
     })
 
 
     ess <- apply(param_mat, 2, function(x) {
-      chain_matrix <- matrix(x, nrow = mcmc_specs$B, ncol = mcmc_specs$chains, byrow = FALSE)
+      chain_matrix <- matrix(x, nrow = B, ncol = mcmc_specs$chains, byrow = FALSE)
       chain_list <- split(chain_matrix, col(chain_matrix))
       # Convert each chain into an 'mcmc' object
       mcmc_chains <- lapply(chain_list, function(chain) coda::mcmc(matrix(chain, ncol = 1)))
@@ -172,9 +168,11 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
       PIP = round(pips,digits),
       check.names = FALSE
     )
+    df$Rhat[df$PIP < pip_cutoff] <- NA
+    df$Eff.Sample[df$PIP < pip_cutoff] <- NA
 
     colnames(df)[3:4] <- c(paste0("l-",level*100,"% CI"),
-                           paste0("l-",level*100,"% CI"))
+                           paste0("u-",level*100,"% CI"))
     df
   }
 
@@ -193,7 +191,7 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
   # Separate Posterior Inclusion Probabilities for `candsplinevars`
   cat("\nPosterior Inclusion Probabilities for Splines:\n")
   spline_pips <- vars_prop_summ[names(vars_prop_summ) %in% c(results$candsplinevars,
-                                                             paste0(results$candsplinevars,":trt"))]
+                                                             paste0(results$candsplinevars,paste0(":",factor_var)))]
   print(spline_pips)
 }
 
@@ -206,8 +204,7 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
 #'
 #' @param x An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
 #' \describe{
-#'   \item{success}{Logical indicating whether the sampler converged based on Geweke diagnostics.}
-#'   \item{inter_trt_param}{Matrix of posterior samples for treatment intercept and main effect.}
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
 #'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
 #'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
 #'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
@@ -217,7 +214,7 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
 #'   \item{candsplinevars}{Names of continuous candidate spline variables.}
 #'   \item{candbinaryvars}{Names of binary candidate variables.}
 #'   \item{candinter}{Names of interaction terms, which can include spline variables.}
-#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of samples, burn-in, thinning, and chains.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
 #' }
 #' @param ... Additional arguments to be passed to other methods or functions.
 #'
@@ -226,17 +223,17 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
 #'   \item{Model Formula}{The model formula with spline terms wrapped in `fbs()`, indicating free-knot B-splines, and interaction terms appropriately formatted.}
 #'   \item{Convergence Diagnostics}{Reports any convergence issues based on Geweke diagnostics.}
 #'   \item{MCMC Sampler Arguments}{Displays MCMC sampler arguments, including the number of posterior samples, burn-in, thinning, and chains.}
-#'   \item{Parameter Estimates}{Posterior mean, standard error, 95% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, treatment intercept, and treatment effect.}
+#'   \item{Parameter Estimates}{Posterior mean, standard error, 95% credible intervals, effective sample size (ESS), Gelman-Rubin statistic (Rhat), and posterior inclusion probabilities (PIP) for binary parameters, exposure intercept, and exposure effect.}
 #'   \item{Gaussian Family Parameters}{Posterior summary for the residual standard error (sigma).}
 #'   \item{Posterior Inclusion Probabilities for Splines}{Prints the posterior inclusion probabilities for spline terms.}
-#'   \item{Plots for Fitted Treatment Effects}{Plots the mean and 95% credible intervals for each spline term vs fitted treatment effects.}
+#'   \item{Plots for Fitted Exposure Effects}{Plots the mean and 95% credible intervals for each spline term vs fitted exposure effects.}
 #' }
 #'
 #' @details The function produces detailed summaries similar to those from `brms`, including
 #' diagnostics, estimates, posterior inclusion probabilities, and spline effects. The spline terms
 #' are wrapped in `fbs()` notation, indicating the use of free-knot B-splines in the model. If the sampler
 #' did not converge, a warning is issued. The function also allows the user to view diagnostic plots for fitted
-#' treatment effects.
+#' exposure effects.
 #'
 #' @examples
 #' \donttest{
@@ -247,12 +244,9 @@ summary.rjMCMC <- function(object, digits = 2, level = 0.95, ...) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 #'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'            outcome = "Y", factor_var = "trt")
 #' print(results)
 #' }
 #' @export
@@ -267,7 +261,20 @@ print.rjMCMC <- function(x,...) {
 #' It combines the fixed effects, spline terms, and binary parameters, and includes residual variance
 #' in the predictions.
 #'
-#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples and fitted splines.
+#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
 #' @param newdata A data frame for which predictions are to be made. If NA, the original fitted data is used.
 #' @param ... Additional arguments to be passed to other methods or functions.
 #'
@@ -283,27 +290,24 @@ print.rjMCMC <- function(x,...) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'            outcome = "Y", factor_var = "trt")
 #' predict(results)
 #' }
 #' @export
 predict.rjMCMC <- function(object, newdata = NULL, ...) {
   results <- object
+  factor_var = results$factor_var
   if (is.null(newdata)) {
     newdata = results$data_fit
   }
-  fitted_posterior =  results$inter_trt_param %*% t(cbind(1,newdata$trt))
+  fitted_posterior =  results$fixed_param %*% t(cbind(1,newdata[,factor_var]))
 
   all_splines = names(results$splines_fitted)
   all_binary = colnames(results$binary_param)
 
   # Check if newdata contains required columns
-  required_columns <- c(results$candbinaryvars, results$candsplinevars, "trt")
+  required_columns <- c(results$candbinaryvars, results$candsplinevars, factor_var)
   missing_columns <- setdiff(required_columns, colnames(newdata))
 
   if (length(missing_columns) > 0) {
@@ -312,10 +316,10 @@ predict.rjMCMC <- function(object, newdata = NULL, ...) {
 
   if (length(all_splines) > 0) {
     for (m in 1:length(all_splines)) {
-      if (grepl(":trt", all_splines[m])) {
+      if (grepl(paste0(":",factor_var), all_splines[m])) {
         interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[all_splines[m]]]), function(j) {
-          stats::approx(x = results$data_fit[,gsub(":trt$", "", all_splines[m])]*results$data_fit$trt,
-                 y = results$splines_fitted[[all_splines[m]]][j,]*results$data_fit$trt, xout = newdata[,gsub(":trt$", "", all_splines[m])]*newdata$trt,rule=2,ties="mean")$y
+          stats::approx(x = results$data_fit[,gsub(paste0(":",factor_var,"$"), "", all_splines[m])]*results$data_fit[,factor_var],
+                 y = results$splines_fitted[[all_splines[m]]][j,]*results$data_fit[,factor_var], xout = newdata[,gsub(paste0(":",factor_var,"$"), "", all_splines[m])]*newdata[,factor_var],rule=2,ties="mean")$y
         })
       } else {
         interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[all_splines[m]]]), function(j) {
@@ -327,16 +331,16 @@ predict.rjMCMC <- function(object, newdata = NULL, ...) {
     }
   }
 
-  interaction_terms <- colnames(results$binary_param)[grepl(":trt$", colnames(results$binary_param))]
+  interaction_terms <- colnames(results$binary_param)[grepl(paste0(":",factor_var,"$"), colnames(results$binary_param))]
 
   # Create interaction columns in newdata based on the matching regular terms
   for (interaction_term in interaction_terms) {
-    # Get the base name before ":trt"
-    base_name <- gsub(":trt$", "", interaction_term)
+    # Get the base name before paste0(":",factor_var)
+    base_name <- gsub(paste0(":",factor_var,"$"), "", interaction_term)
 
     # If the base term exists in newdata, create the interaction term
     if (base_name %in% colnames(newdata)) {
-      newdata[[interaction_term]] <- newdata[[base_name]] * newdata$trt
+      newdata[[interaction_term]] <- newdata[[base_name]] * newdata[,factor_var]
     }
   }
   if (length(all_binary) > 0) {
@@ -355,8 +359,21 @@ predict.rjMCMC <- function(object, newdata = NULL, ...) {
 #' This function generates posterior fitted values from an rjMCMC model based on the provided data.
 #' It combines the fixed effects, spline terms, and binary parameters.
 #'
-#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples and fitted splines.
-#' @param newdata A data frame for which fited values are to be computed. If NA, the original fitted data is used.
+#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
+#' @param newdata A data frame for which fitted values are to be computed. If NA, the original fitted data is used.
 #' @param ... Additional arguments to be passed to other methods or functions.
 #'
 #' @return A matrix of fitted values.
@@ -370,12 +387,9 @@ predict.rjMCMC <- function(object, newdata = NULL, ...) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'            outcome = "Y", factor_var = "trt")
+#'
 #' newdata = data.frame(Z_1 = 1, Z_2 = 1, Z_3 = 1, Z_4 = 1, Z_5 = 1,
 #'                    trt = 1, X_1 = seq(0,1,by=0.01))
 #' fitted(results)
@@ -384,6 +398,7 @@ predict.rjMCMC <- function(object, newdata = NULL, ...) {
 #' @export
 fitted.rjMCMC <- function(object, newdata = NULL,...) {
   results <- object
+  factor_var = results$factor_var
   if (is.null(newdata)) {
     newdata = results$data_fit
   }
@@ -392,7 +407,7 @@ fitted.rjMCMC <- function(object, newdata = NULL,...) {
   all_binary = colnames(results$binary_param)
 
   # Check if newdata contains required columns
-  required_columns <- c(results$candbinaryvars, results$candsplinevars, "trt")
+  required_columns <- c(results$candbinaryvars, results$candsplinevars, factor_var)
   missing_columns <- setdiff(required_columns, colnames(newdata))
 
 
@@ -400,14 +415,14 @@ fitted.rjMCMC <- function(object, newdata = NULL,...) {
     stop(paste("Error: The following columns are missing in newdata:", paste(missing_columns, collapse = ", ")))
   }
 
-  fitted_posterior =  results$inter_trt_param %*% t(cbind(1,newdata$trt))
+  fitted_posterior =  results$fixed_param %*% t(cbind(1,newdata[,factor_var]))
 
   if (length(all_splines) > 0) {
     for (m in 1:length(all_splines)) {
-      if (grepl(":trt", all_splines[m])) {
+      if (grepl(paste0(":",factor_var), all_splines[m])) {
         interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[all_splines[m]]]), function(j) {
-          stats::approx(x = results$data_fit[,gsub(":trt$", "", all_splines[m])]*results$data_fit$trt,
-                 y = results$splines_fitted[[all_splines[m]]][j,]*results$data_fit$trt, xout = newdata[,gsub(":trt$", "", all_splines[m])]*newdata$trt,rule=2,ties="mean")$y
+          stats::approx(x = results$data_fit[,gsub(paste0(":",factor_var,"$"), "", all_splines[m])]*results$data_fit[,factor_var],
+                 y = results$splines_fitted[[all_splines[m]]][j,]*results$data_fit[,factor_var], xout = newdata[,gsub(paste0(":",factor_var,"$"), "", all_splines[m])]*newdata[,factor_var],rule=2,ties="mean")$y
         })
       } else {
         interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[all_splines[m]]]), function(j) {
@@ -419,16 +434,16 @@ fitted.rjMCMC <- function(object, newdata = NULL,...) {
     }
   }
 
-  interaction_terms <- colnames(results$binary_param)[grepl(":trt$", colnames(results$binary_param))]
+  interaction_terms <- colnames(results$binary_param)[grepl(paste0(":",factor_var,"$"), colnames(results$binary_param))]
 
   # Create interaction columns in newdata based on the matching regular terms
   for (interaction_term in interaction_terms) {
-    # Get the base name before ":trt"
-    base_name <- gsub(":trt$", "", interaction_term)
+    # Get the base name before paste0(":",factor_var)
+    base_name <- gsub(paste0(":",factor_var,"$"), "", interaction_term)
 
     # If the base term exists in newdata, create the interaction term
     if (base_name %in% colnames(newdata)) {
-      newdata[[interaction_term]] <- newdata[[base_name]] * newdata$trt
+      newdata[[interaction_term]] <- newdata[[base_name]] * newdata[,factor_var]
     }
   }
   if (length(all_binary) > 0) {
@@ -439,12 +454,25 @@ fitted.rjMCMC <- function(object, newdata = NULL,...) {
   return(fitted_posterior)
 }
 
-#' Fitted treatment effect values from Reversible Jump MCMC (rjMCMC) Model Results
+#' Fitted exposure effect values from Reversible Jump MCMC (rjMCMC) Model Results
 #'
-#' This function generates posterior fitted treatment effects from an rjMCMC model based on the provided data.
+#' This function generates posterior fitted exposure effects from an rjMCMC model based on the provided data.
 #' It combines the fixed effects, spline terms, and binary parameters.
 #'
-#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples and fitted splines.
+#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
 #' @param newdata A data frame for which fitted values are to be computed. If NA, the original fitted data is used.
 #'
 #' @return A matrix of fitted values.
@@ -457,20 +485,16 @@ fitted.rjMCMC <- function(object, newdata = NULL,...) {
 #' candsplinevars <- c("X_1")
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
-#'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' newdata = data.frame(Z_1 = 1, Z_2 = 1, Z_3 = 1, Z_4 = 1, Z_5 = 1,
 #'                    trt = 1, X_1 = seq(0,1,by=0.01))
-#' fittedTrtEff(results)
-#' fittedTrtEff(results,newdata)
+#' fittedExposureEff(results)
+#' fittedExposureEff(results,newdata)
 #' }
 #' @export
-fittedTrtEff <- function(results, newdata = NULL) {
+fittedExposureEff <- function(results, newdata = NULL) {
+  factor_var = results$factor_var
   if (is.null(newdata)) {
     newdata = results$data_fit
   }
@@ -484,44 +508,57 @@ fittedTrtEff <- function(results, newdata = NULL) {
     stop(paste("Error: The following columns are missing in newdata:", paste(missing_columns, collapse = ", ")))
   }
 
-  fitted_posterior =  results$inter_trt_param[,"trt"] %*% matrix(1,ncol=nrow(newdata))
+  fitted_posterior =  results$fixed_param[,factor_var] %*% matrix(1,ncol=nrow(newdata))
   candsplineinter = results$candsplineinter
   if (length(candsplineinter) > 0) {
     for (m in 1:length(candsplineinter)) {
-      interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[paste0(candsplineinter[m],":trt")]]), function(j) {
+      interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[paste0(candsplineinter[m],paste0(":",factor_var))]]), function(j) {
         stats::approx(x = results$data_fit[,candsplineinter[m]],
-               y = results$splines_fitted[[paste0(candsplineinter[m],":trt")]][j,], xout = newdata[,candsplineinter[m]],rule=2,ties="mean")$y
+               y = results$splines_fitted[[paste0(candsplineinter[m],paste0(":",factor_var))]][j,], xout = newdata[,candsplineinter[m]],rule=2,ties="mean")$y
       })
       fitted_posterior = fitted_posterior + t(interpolated_splines_fitted)
     }
   }
 
-  candbinaryinter <- colnames(results$binary_param)[grepl(":trt$", colnames(results$binary_param))]
+  candbinaryinter <- colnames(results$binary_param)[grepl(paste0(":",factor_var,"$"), colnames(results$binary_param))]
 
   if (length(candbinaryinter) > 0) {
     fitted_posterior = fitted_posterior +
-      results$binary_param[,candbinaryinter] %*% t(as.matrix(newdata[,gsub(":trt$", "",candbinaryinter)]))
+      results$binary_param[,candbinaryinter] %*% t(as.matrix(newdata[,gsub(paste0(":",factor_var,"$"), "",candbinaryinter)]))
   }
 
   return(fitted_posterior)
 }
 
 
-#' Predict Treatment Effect
+#' Predict Exposure Effect
 #'
-#' This function predicts the treatment effect for new data based the Reversible Jump MCMC (rjMCMC) results.
+#' This function predicts the exposure effect for new data based the Reversible Jump MCMC (rjMCMC) results.
 #'
-#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples and fitted splines.
+#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
 #' @param newdata A data frame for which predicted values are to be computed If NA, the original fitted data is used.
 #'
-#' @return A matrix of predictive posterior samples for the treatment effect, where each row corresponds to a posterior sample
+#' @return A matrix of predictive posterior samples for the exposure effect, where each row corresponds to a posterior sample
 #'   and each column corresponds to an observation in \code{newdata}.
 #'
 #' @details
 #' The function:
 #' \itemize{
 #'   \item Checks if the required columns in \code{results$candinter} are present in \code{newdata}.
-#'   \item Computes the fitted posterior treatment effect based on main treatment effects, spline interactions, and binary interactions.
+#'   \item Computes the fitted posterior exposure effect based on main exposure effects, spline interactions, and binary interactions.
 #'   \item Adds noise to the fitted posterior using the residual variance \code{results$sigma_sq} to generate predictive posterior samples.
 #' }
 #'
@@ -536,19 +573,16 @@ fittedTrtEff <- function(results, newdata = NULL) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' newdata = data.frame(Z_1 = 1, Z_2 = 1, Z_3 = 1, Z_4 = 1, Z_5 = 1,
 #'                    trt = 1, X_1 = seq(0,1,by=0.01))
-#' predictTrtEff(results)
-#' predictTrtEff(results,newdata)
+#' predictExposureEff(results)
+#' predictExposureEff(results,newdata)
 #' }
 #' @export
-predictTrtEff <- function(results, newdata = NULL) {
+predictExposureEff <- function(results, newdata = NULL) {
+  factor_var = results$factor_var
   if (is.null(newdata)) {
     newdata = results$data_fit
   }
@@ -562,23 +596,23 @@ predictTrtEff <- function(results, newdata = NULL) {
     stop(paste("Error: The following columns are missing in newdata:", paste(missing_columns, collapse = ", ")))
   }
 
-  fitted_posterior =  results$inter_trt_param[,"trt"] %*% matrix(1,ncol=nrow(newdata))
+  fitted_posterior =  results$fixed_param[,factor_var] %*% matrix(1,ncol=nrow(newdata))
   candsplineinter = results$candsplineinter
   if (length(candsplineinter) > 0) {
     for (m in 1:length(candsplineinter)) {
-      interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[paste0(candsplineinter[m],":trt")]]), function(j) {
+      interpolated_splines_fitted <- sapply(1:nrow(results$splines_fitted[[paste0(candsplineinter[m],paste0(":",factor_var))]]), function(j) {
         stats::approx(x = results$data_fit[,candsplineinter[m]],
-               y = results$splines_fitted[[paste0(candsplineinter[m],":trt")]][j,], xout = newdata[,candsplineinter[m]],rule=2,ties="mean")$y
+               y = results$splines_fitted[[paste0(candsplineinter[m],paste0(":",factor_var))]][j,], xout = newdata[,candsplineinter[m]],rule=2,ties="mean")$y
       })
       fitted_posterior = fitted_posterior + t(interpolated_splines_fitted)
     }
   }
 
-  candbinaryinter <- colnames(results$binary_param)[grepl(":trt$", colnames(results$binary_param))]
+  candbinaryinter <- colnames(results$binary_param)[grepl(paste0(":",factor_var,"$"), colnames(results$binary_param))]
 
   if (length(candbinaryinter) > 0) {
     fitted_posterior = fitted_posterior +
-      results$binary_param[,candbinaryinter] %*% t(as.matrix(newdata[,gsub(":trt$", "",candbinaryinter)]))
+      results$binary_param[,candbinaryinter] %*% t(as.matrix(newdata[,gsub(paste0(":",factor_var,"$"), "",candbinaryinter)]))
   }
 
   residual_se <- sqrt(results$sigma_sq)
@@ -590,11 +624,24 @@ predictTrtEff <- function(results, newdata = NULL) {
 #' Compute Posterior Inclusion Probabilities (PIPs) for rjMCMC Results
 #'
 #' This function returns the posterior inclusion probabilities (PIPs) for all variables,
-#' including the intercept and treatment, based on the results from an rjMCMC model.
+#' including the intercept and exposure, based on the results from an rjMCMC model.
 #'
-#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, including the PIP summary for variables.
+#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
 #'
-#' @return A numeric vector with the PIPs for the intercept, treatment, and other variables.
+#' @return A numeric vector with the PIPs for the intercept, exposure, and other variables.
 #' @examples
 #' \donttest{
 #' # Example dataset
@@ -604,28 +651,40 @@ predictTrtEff <- function(results, newdata = NULL) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' pip(results)
 #' }
 #' @export
 pip <- function(results) {
-  c(intercept = 1, trt = 1, results$vars_prop_summ)
+  factor_var = results$factor_var
+  pip <- c(intercept = 1, factor_var = 1, results$vars_prop_summ)
+  names(pip)[2] = factor_var
+  return(pip)
 }
 
 #' Extract Posterior Mean Coefficients from rjMCMC Results
 #'
-#' This function extracts the posterior means of the intercept, treatment parameters,
+#' This function extracts the posterior means of the intercept, exposure parameters,
 #' and binary parameters from the results of an rjMCMC model.
 #'
-#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples.
+#' @param object An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
+#' \describe{
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+#' }
 #' @param ... Additional arguments to be passed to other methods or functions.
 #'
-#' @return A numeric vector containing the posterior mean of the intercept, treatment, and binary parameters.
+#' @return A numeric vector containing the posterior mean of the intercept, exposure, and binary parameters.
 #' @examples
 #' \donttest{
 #' # Example dataset
@@ -635,25 +694,22 @@ pip <- function(results) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 #'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' coef(results)
 #' }
 #' @export
 coef.rjMCMC <- function(object, ...) {
   results <- object
-  c(apply(results$inter_trt_param, 2, mean),
+  c(apply(results$fixed_param, 2, mean),
           apply(results$binary_param, 2, mean))
 }
 
 #' Credible Intervals for rjMCMC Results
 #'
 #' This function calculates the posterior mean and credible intervals for parameters
-#' from the rjMCMC results, including both intercept/treatment parameters and binary parameters.
+#' from the rjMCMC results, including both intercept/exposure parameters and binary parameters.
 #' The credible intervals are computed based on the specified confidence level.
 #'
 #' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, including posterior samples.
@@ -670,22 +726,19 @@ coef.rjMCMC <- function(object, ...) {
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
 #'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' credint(results)
 #' }
 #' @export
 credint <- function(results, level = 0.95) {
   alpha = 1-level
-  df = data.frame(Estimate = c(apply(results$inter_trt_param, 2, mean),
+  df = data.frame(Estimate = c(apply(results$fixed_param, 2, mean),
                           apply(results$binary_param, 2, mean)),
-             Lower = c(apply(results$inter_trt_param, 2, stats::quantile,prob=alpha/2),
+             Lower = c(apply(results$fixed_param, 2, stats::quantile,prob=alpha/2),
                        apply(results$binary_param, 2, stats::quantile, prob=1-alpha/2)),
-             Upper = c(apply(results$inter_trt_param, 2,stats::quantile,prob=alpha/2),
+             Upper = c(apply(results$fixed_param, 2,stats::quantile,prob=alpha/2),
                       apply(results$binary_param, 2, stats::quantile, prob=1-alpha/2)))
   colnames(df) = c("Estimate", paste0("Q",alpha/2*100), paste0("Q",(1-alpha/2)*100))
   return(df)
@@ -713,10 +766,10 @@ credint <- function(results, level = 0.95) {
 #'     - For \code{sample_type = "estimand"}, only \code{plot_type = "hist"} or "trace" is compatible, as it represents the posterior
 #'       distribution or MCMC trajectory of individual parameters.
 #'     - For \code{sample_type = "fitted"} or \code{"predictive"}, this function plots either the main effect
-#'       (no interaction with treatment) or treatment effect for an individual using auxiliary variable values.
+#'       (no interaction with exposure) or exposure effect for an individual using auxiliary variable values.
 #' - **Effect Types**:
-#'     - For \code{sample_type = "fitted"} or \code{"predictive"}, \code{"outcome"} generates plots without treatment interaction,
-#'       and \code{"treatment_effect"} plots the interaction effect with treatment.
+#'     - For \code{sample_type = "fitted"} or \code{"predictive"}, \code{"outcome"} generates plots without exposure interaction,
+#'       and \code{"exposure_effect"} plots the interaction effect with exposure.
 #'
 #' @note This is an internal function not intended for direct use by package users.
 #'
@@ -728,7 +781,7 @@ credint <- function(results, level = 0.95) {
 plotHistTrace <- function(results,
                           variables = NULL,
                           sample_type = "fitted",
-                          effect_type = "treatment_effect",
+                          effect_type = "exposure_effect",
                           plot_type = "cred",
                           aux_vars = list(),
                           facet_by = NULL) {
@@ -741,19 +794,19 @@ plotHistTrace <- function(results,
 
   if (sample_type == "estimand") {
     binary_vars <- intersect(c(variables,facet_by), colnames(results$binary_param))
-    inter_vars <- intersect(c(variables,facet_by), colnames(results$inter_trt_param))
+    fixed_vars <- intersect(c(variables,facet_by), colnames(results$fixed_param))
     sigma_vars <- intersect(c(variables,facet_by), "sigma")
 
-    # Prepare data for inter_trt_param plots (only if inter_vars exist)
-    if (length(inter_vars) > 0) {
-      inter_trt_param_plot_df <- expand.grid(
+    # Prepare data for fixed_param plots (only if inter_vars exist)
+    if (length(fixed_vars) > 0) {
+      fixed_param_plot_df <- expand.grid(
         iterations = seq_len(B_per_chain),
         chains = as.factor(seq_len(chains)),
-        param = inter_vars
+        param = fixed_vars
       )
-      inter_trt_param_plot_df$value <- as.vector(results$inter_trt_param[, inter_vars])
+      fixed_param_plot_df$value <- as.vector(results$fixed_param[, fixed_vars])
     } else {
-      inter_trt_param_plot_df <- NULL
+      fixed_param_plot_df <- NULL
     }
 
     # Prepare data for binary_param plots (only if binary_vars exist)
@@ -779,7 +832,7 @@ plotHistTrace <- function(results,
       sigma_param_plot_df <- NULL
     }
 
-    data_list <- list(inter_trt_param_plot_df, binary_param_plot_df, sigma_param_plot_df)
+    data_list <- list(fixed_param_plot_df, binary_param_plot_df, sigma_param_plot_df)
     plot_df <- do.call(rbind, Filter(Negate(is.null), data_list))
 
     if (is.null(plot_df) || nrow(plot_df) == 0) {
@@ -794,7 +847,7 @@ plotHistTrace <- function(results,
         # Set binary variables to c(0, 1)
         newdata[[var]] <- c(0, 1)
       } else if (var %in% colnames(results$data_fit)) {
-        # Set continuous variables to three quantiles of X_1 in results$data_fit
+        # Set continuous variables to two quantiles of X_1 in results$data_fit
         quantiles <- stats::quantile(results$data_fit[[var]], probs = c(0.25, 0.75))
         newdata[[var]] <- quantiles
       }
@@ -802,9 +855,9 @@ plotHistTrace <- function(results,
 
     expanded_data <- expand.grid(newdata)
     mcmc_samples_all <- if (sample_type == "fitted") {
-      if (effect_type == "outcome") fitted(results, expanded_data) else fittedTrtEff(results, expanded_data)
+      if (effect_type == "outcome") fitted(results, expanded_data) else fittedExposureEff(results, expanded_data)
     } else {
-      if (effect_type == "outcome") predict(results, expanded_data) else predictTrtEff(results, expanded_data)
+      if (effect_type == "outcome") predict(results, expanded_data) else predictExposureEff(results, expanded_data)
     }
 
     label_text = rep(NA,nrow(expanded_data))
@@ -832,7 +885,7 @@ plotHistTrace <- function(results,
   if (plot_type == "hist") {
     title <- paste0(
       "Histogram of ", sample_type, " MCMC samples for ",
-      if (effect_type == "outcome") "main effect" else if (sample_type == "estimand") "interaction effect" else "treatment effect"
+      if (effect_type == "outcome") "main effect" else if (sample_type == "estimand") "interaction effect" else "exposure effect"
     )
     p_hist <- plot_df %>%
       ggplot2::ggplot(ggplot2::aes(x=.data$value, fill = .data$chains)) +
@@ -845,7 +898,7 @@ plotHistTrace <- function(results,
   } else if (plot_type == "trace") {
     title <- paste0(
       "Trace plot of ", sample_type, " MCMC samples for ",
-      if (effect_type == "outcome") "main effect" else if (sample_type == "estimand") "interaction effect" else "treatment effect"
+      if (effect_type == "outcome") "main effect" else if (sample_type == "estimand") "interaction effect" else "exposure effect"
     )
     p_trace <- plot_df %>%
       ggplot2::ggplot(ggplot2::aes(x = .data$iterations, y = .data$value, col = .data$chains)) +
@@ -869,9 +922,9 @@ plotHistTrace <- function(results,
 #' @param sample_type Character string specifying the type of sample: "fitted", "predictive", or "estimand".
 #'                    "fitted" and "predictive" are compatible with \code{plot_type = "cred"}.
 #'                    "estimand" is compatible with \code{plot_type = "hist"} or "trace" (only used for individual parameter trajectories).
-#' @param effect_type Character string indicating the effect type: "treatment_effect" or "outcome".
-#'                    For "treatment_effect", the function plots the fitted or predictive effect of treatment; for "outcome", it plots
-#'                    outcome values without interaction with treatment.
+#' @param effect_type Character string indicating the effect type: "exposure_effect" or "outcome".
+#'                    For "exposure_effect", the function plots the fitted or predictive effect of exposure; for "outcome", it plots
+#'                    outcome values without interaction with exposure.
 #' @param plot_type Character string specifying the plot type: "cred" for credible interval plots, or "hist"/"trace" for histogram or trace plots
 #'                  of individual parameters (only for \code{sample_type = "estimand"}).
 #' @param level Numeric value for the credible interval level (default is 0.95).
@@ -883,12 +936,12 @@ plotHistTrace <- function(results,
 #' - **Sample and Plot Compatibility**:
 #'     - For \code{sample_type = "estimand"}, only \code{plot_type = "hist"} or "trace" is allowed, as these are designed to visualize the posterior distribution
 #'       or MCMC trajectory of individual parameters. Parameters like \code{intercept}, \code{trt}, and \code{sigma} are agnostic to \code{effect_type} as they
-#'       do not interact with treatment.
+#'       do not interact with exposure.
 #'     - \code{plot_type = "cred"} is designed for use with \code{sample_type = "fitted"} or "predictive" and shows credible intervals for the outcome (y-axis)
-#'       across biomarker values (x-axis) by covariate pattern. \code{effect_type} controls whether the treatment effect or main effect is displayed.
+#'       across biomarker values (x-axis) by covariate pattern. \code{effect_type} controls whether the exposure effect or main effect is displayed.
 #' - **Effect Types**:
-#'     - \code{outcome} plots either the fitted or predictive values without treatment interaction, allowing for treatment (\code{trt}) values to be specified.
-#'     - \code{treatment_effect} plots the interaction of the treatment effect across different covariate patterns.
+#'     - \code{outcome} plots either the fitted or predictive values without exposure interaction, allowing for exposure (\code{trt}) values to be specified.
+#'     - \code{exposure_effect} plots the interaction of the exposure effect across different covariate patterns.
 #'
 #' @return A \code{ggplot2} object or a grid of plots.
 #'
@@ -905,13 +958,9 @@ plotHistTrace <- function(results,
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
-#' plot(results, sample_type = "fitted", effect_type = "treatment_effect", plot_type = "cred")
+#'                   outcome = "Y", factor_var = "trt")
+#' plot(results, sample_type = "fitted", effect_type = "exposure_effect", plot_type = "cred")
 #' plot(results, sample_type = "estimand", plot_type = "hist")
 #' }
 #' @export
@@ -919,13 +968,14 @@ plot.rjMCMC <- function(x,
                         ...,
                         variables = NULL,
                         sample_type = "fitted",
-                        effect_type = "treatment_effect",
+                        effect_type = "exposure_effect",
                         plot_type = "cred",
                         level = 0.95,
                         aux_vars = list(),
                         facet_by = NULL,
                         pip_cutoff = 0.1) {
   results <- x
+  factor_var = results$factor_var
   # Check if any elements of `facet_by` are in `variables`
   common_elements <- intersect(facet_by, variables)
   # Throw an error if there are common elements
@@ -948,7 +998,7 @@ plot.rjMCMC <- function(x,
 
   # List of all model variables
   model_vars <- c(results$candsplinevars, results$candbinaryvars)
-  invalid_aux_vars <- setdiff(names(aux_vars), c("trt",model_vars))
+  invalid_aux_vars <- setdiff(names(aux_vars), c(factor_var,model_vars))
   if (length(invalid_aux_vars) > 0) {
     stop("The following variables in aux_vars are not part of the model variables: ", paste(invalid_aux_vars, collapse = ", "))
   }
@@ -968,7 +1018,7 @@ plot.rjMCMC <- function(x,
   }
 
   # Validate `effect_type`
-  valid_effect_types <- c("treatment_effect", "outcome")
+  valid_effect_types <- c("exposure_effect", "outcome")
   if (!effect_type %in% valid_effect_types) {
     stop(paste("Invalid effect_type:", effect_type,
                "- must be one of", paste(valid_effect_types, collapse = ", ")))
@@ -977,27 +1027,27 @@ plot.rjMCMC <- function(x,
   # Exclude intercept and trt, which always have pip = 1
   pip_cov = pip(results)[-c(1,2)]
   pip_cov = pip_cov[pip_cov > pip_cutoff]
-  # (1) Get variables without ":trt" for pip_cov_main
-  pip_cov_main <- names(pip_cov)[!grepl(":trt", names(pip_cov))]
+  # (1) Get variables without paste0(":",factor_var) for pip_cov_main
+  pip_cov_main <- names(pip_cov)[!grepl(paste0(":",factor_var), names(pip_cov))]
 
-  # (2) Get variables with ":trt" and remove ":trt" for pip_cov_inter
-  pip_cov_inter <- gsub(":trt", "", names(pip_cov)[grepl(":trt", names(pip_cov))])
+  # (2) Get variables with paste0(":",factor_var) and remove paste0(":",factor_var) for pip_cov_inter
+  pip_cov_inter <- gsub(paste0(":",factor_var), "", names(pip_cov)[grepl(paste0(":",factor_var), names(pip_cov))])
 
   # Set `variables` automatically if it is NULL
   if (is.null(variables)) {
     message("Automatically setting variables to be continuous model variables with pip > pip_cutoff.")
-    variables <- intersect(if (effect_type == "treatment_effect") pip_cov_inter else pip_cov_main, results$candsplinevars)
+    variables <- intersect(if (effect_type == "exposure_effect") pip_cov_inter else pip_cov_main, results$candsplinevars)
     # Set `facet_by` automatically if it is NULL, only in the case when variables is also NULL
     # (reserves the right for users to specify facet_by = NULL generally)
     if (is.null(facet_by)) {
       message("Automatically setting facet_by to be binary model variables with pip > pip_cutoff.")
-      facet_by <- intersect(if (effect_type == "treatment_effect") pip_cov_inter else pip_cov_main, results$candbinaryvars)
+      facet_by <- intersect(if (effect_type == "exposure_effect") pip_cov_inter else pip_cov_main, results$candbinaryvars)
     }
   }
 
   # Identify missing variables not in aux_vars, variables, or facet_by
   provided_vars <- c(names(aux_vars), variables, facet_by)
-  missing_vars <- if (effect_type == "outcome") setdiff(c(model_vars,"trt"), provided_vars) else setdiff(model_vars, provided_vars)
+  missing_vars <- if (effect_type == "outcome") setdiff(c(model_vars,factor_var), provided_vars) else setdiff(model_vars, provided_vars)
 
   # Set missing variables to 0 and notify user
   if (length(missing_vars) > 0 & sample_type != "estimand") {
@@ -1078,24 +1128,24 @@ plot.rjMCMC <- function(x,
 
       if (effect_type == "outcome") {
         expanded_data <- expanded_data %>%
-          dplyr::mutate(dplyr::across(dplyr::all_of(results$candinter),
-                                      ~ . * trt,
-                                      .names = "{.col}:trt"))
+          mutate(across(all_of(results$candinter),
+                        ~ . * !!sym(facet_var),
+                        .names = "{.col}:{facet_var}"))
       }
 
 
 
       # Get mcmc_estimates based on sample_type and effect_type
       mcmc_estimates <- if (sample_type == "fitted") {
-        if (effect_type == "outcome") fitted(results, expanded_data) else fittedTrtEff(results, expanded_data)
+        if (effect_type == "outcome") fitted(results, expanded_data) else fittedExposureEff(results, expanded_data)
       } else {
-        if (effect_type == "outcome") predict(results, expanded_data) else predictTrtEff(results, expanded_data)
+        if (effect_type == "outcome") predict(results, expanded_data) else predictExposureEff(results, expanded_data)
       }
 
       fixed_values <- sapply(newdata, function(col) unique(col))
       fixed_values <- fixed_values[names(fixed_values)!=var]
-      if (effect_type == "treatment_effect") {
-        fixed_values <- fixed_values[names(fixed_values) != "trt"]
+      if (effect_type == "exposure_effect") {
+        fixed_values <- fixed_values[names(fixed_values) != factor_var]
       }
 
       if (!is.null(facet_by)) {
@@ -1110,7 +1160,7 @@ plot.rjMCMC <- function(x,
         effect_type_text <- if (sample_type == "fitted") "Fitted Outcome" else "Predictive Outcome"
         paste(effect_type_text, "of", var, "for", fixed_values_text)
       } else {
-        effect_type_text <- if (sample_type == "fitted") "Fitted Treatment Effect" else "Predictive Treatment Effect"
+        effect_type_text <- if (sample_type == "fitted") "Fitted Exposure Effect" else "Predictive Exposure Effect"
         paste(effect_type_text, "of", var, "for", fixed_values_text)
       }
 
@@ -1171,9 +1221,9 @@ plot.rjMCMC <- function(x,
 
 #' Get Effective Subspace
 #'
-#' This function identifies the "effective subspace" where treatment is effective
+#' This function identifies the "effective subspace" where exposure is effective
 #' based on posterior inference results from the FK-BMA model. It analyzes interaction terms
-#' between treatment and covariates, allowing for both binary and continuous variables.
+#' between exposure and covariates, allowing for both binary and continuous variables.
 #'
 #' @param results A fitted model object from \code{rjMCMC}.
 #' @param newdata Optional. A new dataset for evaluating the effective subspace.
@@ -1183,17 +1233,17 @@ plot.rjMCMC <- function(x,
 #'   threshold for selecting covariates. Default is \code{0.1}.
 #'
 #' @return A list with the following components:
-#'   \item{quantiles}{A vector of quantile values for the treatment effect in the new dataset.}
-#'   \item{is_effective_subspace}{A logical vector indicating whether the treatment effect is
+#'   \item{quantiles}{A vector of quantile values for the exposure effect in the new dataset.}
+#'   \item{is_effective_subspace}{A logical vector indicating whether the exposure effect is
 #'   positive in the effective subspace.}
 #'
 #' @details
-#' - The function computes the posterior treatment effect for each observation in the
-#'   dataset using the \code{fittedTrtEff} function and evaluates its quantiles at the
+#' - The function computes the posterior exposure effect for each observation in the
+#'   dataset using the \code{fittedExposureEff} function and evaluates its quantiles at the
 #'   specified \code{alpha} level.
 #' - Binary variables with high posterior inclusion probabilities (PIP) are used to define
 #'   subgroups, and the corresponding effective subspaces for a continuous variable
-#'   are identified by checking where the treatment effect quantiles are strictly positive.
+#'   are identified by checking where the exposure effect quantiles are strictly positive.
 #' - If the number of binary variables is \code{<= 3} and there is exactly one continuous variable,
 #'   the function describes the effective subspace in terms of disjoint intervals.
 #' - For more complex cases, a warning is issued suggesting alternative methods such as
@@ -1210,12 +1260,8 @@ plot.rjMCMC <- function(x,
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' getEffectiveSubspace(results)
 #' }
 #' @export
@@ -1223,17 +1269,18 @@ getEffectiveSubspace <- function(results,
                                  newdata = NULL,
                                  alpha = 0.05,
                                  pip_cutoff = 0.1) {
+  factor_var = results$factor_var
   if (is.null(newdata)) {
     newdata = results$data_fit
   }
-  mcmc_estimates = fittedTrtEff(results, newdata)
+  mcmc_estimates = fittedExposureEff(results, newdata)
   quantiles = matrixStats::colQuantiles(mcmc_estimates,probs=alpha)
   newdata$quantiles = quantiles
   pip_cov = pip(results)[-c(1,2)]
   pip_cov = pip_cov[pip_cov > pip_cutoff]
 
-  # (2) Get variables with ":trt" and remove ":trt" for pip_cov_inter
-  pip_cov_inter <- gsub(":trt", "", names(pip_cov)[grepl(":trt", names(pip_cov))])
+  # (2) Get variables with paste0(":",factor_var) and remove paste0(":",factor_var) for pip_cov_inter
+  pip_cov_inter <- gsub(paste0(":",factor_var), "", names(pip_cov)[grepl(paste0(":",factor_var), names(pip_cov))])
   binary_vars = intersect(pip_cov_inter,results$candbinaryvars)
   continuous_var = intersect(pip_cov_inter,results$candsplinevars)
   all_vars <- c(binary_vars, continuous_var)
@@ -1297,7 +1344,7 @@ getEffectiveSubspace <- function(results,
         }
       }
     }
-    message(descriptions)
+    message(paste(descriptions, collapse = ", "))
   } else {
     warning(
       "The decision rules may be too complex to interpret. Consider using other methods, such as a Bayesian regression tree, to identify effective subspaces."
@@ -1312,25 +1359,34 @@ getEffectiveSubspace <- function(results,
 #' Calculate and Print Rhat Diagnostics for rjMCMC Results
 #'
 #' This function calculates the Rhat diagnostic for convergence based on the posterior samples
-#' of individual treatment effects, intercept, and main treatment effect from an rjMCMC model.
-#' It prints the median, minimum, and maximum Rhat values for the treatment effects, as well as
-#' the Rhat for the intercept and treatment effect.
+#' of individual exposure effects, intercept, and main exposure effect from an rjMCMC model.
+#' It prints the median, minimum, and maximum Rhat values for the exposure effects, as well as
+#' the Rhat for the intercept and exposure effect.
 #'
-#' @param results An `rjMCMC` object, including:
+#' @param results An object of class rjMCMC containing the output from the `rjMCMC` procedure, which includes:
 #' \describe{
-#'   \item{trt_eff_posterior}{Matrix of posterior treatment effects.}
-#'   \item{inter_trt_param}{Matrix of posterior estimates for intercept and main treatment effect.}
+#'   \item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+#'   \item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+#'   \item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+#'   \item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+#'   \item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+#'   \item{data_fit}{Original dataset used in the `rjMCMC` procedure.}
+#'   \item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+#'   \item{candsplinevars}{Names of continuous candidate spline variables.}
+#'   \item{candbinaryvars}{Names of binary candidate variables.}
+#'   \item{candinter}{Names of interaction terms, which can include spline variables.}
+#'   \item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
 #' }
 #'
 #' @return A list containing:
 #' \describe{
-#'   \item{Rhat_trt_eff_posterior}{Vector of R-hat values for each individual's treatment effect.}
+#'   \item{Rhat_trt_eff_posterior}{Vector of R-hat values for each individual's exposure effect.}
 #'   \item{Rhat_inter}{R-hat value for the intercept parameter.}
-#'   \item{Rhat_trt}{R-hat value for the main effect of treatment.}
+#'   \item{Rhat_factor_var}{R-hat value for the main effect of exposure.}
 #' }
 #'
 #' @details
-#' This function calculates R-hat statistics to assess MCMC convergence for both treatment effects and model parameters.
+#' This function calculates R-hat statistics to assess MCMC convergence for both exposure effects and model parameters.
 #' Diagnostic plots are generated to visually inspect the chains across iterations.
 #'
 #' @importFrom rstan Rhat
@@ -1344,16 +1400,13 @@ getEffectiveSubspace <- function(results,
 #' candbinaryvars <- paste0("Z_", 1:5)
 #' candinter <- c(candsplinevars, candbinaryvars)
 #'
-#' mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-#' prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-#'                   degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-#'
 #' results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-#'                   mcmc_specs, prior_params)
+#'                   outcome = "Y", factor_var = "trt")
 #' rhats(results)
 #' }
 #' @export
 rhats <- function(results) {
+  factor_var = results$factor_var
   chains = results$mcmc_specs$chains
   num_persons = ncol(results$trt_eff_posterior)
   B_per_chain = nrow(results$trt_eff_posterior)/chains
@@ -1367,20 +1420,20 @@ rhats <- function(results) {
     Rhat_trt_eff_posterior[col] <- rstan::Rhat(chain_matrix)
   }
 
-  message(paste0("Rhat for individual treatment effects: (Median [Range]) ",
+  message(paste0("Rhat for individual exposure effects: (Median [Range]) ",
                round(stats::median(Rhat_trt_eff_posterior),4), " [", round(min(Rhat_trt_eff_posterior),4),",", round(max(Rhat_trt_eff_posterior),4),"]"))
 
-  chain_matrix_inter <- matrix(results$inter_trt_param[, 1], nrow = B_per_chain, ncol = chains, byrow = FALSE)
+  chain_matrix_inter <- matrix(results$fixed_param[, 1], nrow = B_per_chain, ncol = chains, byrow = FALSE)
   Rhat_inter <- rstan::Rhat(chain_matrix_inter)
   message(paste0("Rhat for intercept: ", round(Rhat_inter,4) ))
 
-  chain_matrix_trt <- matrix(results$inter_trt_param[, 2], nrow = B_per_chain, ncol = chains, byrow = FALSE)
-  Rhat_trt <- rstan::Rhat(chain_matrix_trt)
-  message(paste0("Rhat for main effect of treatment: ", round(Rhat_trt,4) ))
+  chain_matrix_trt <- matrix(results$fixed_param[, 2], nrow = B_per_chain, ncol = chains, byrow = FALSE)
+  Rhat_factor_var <- rstan::Rhat(chain_matrix_trt)
+  message(paste0("Rhat for main effect of ",factor_var,": ", round(Rhat_factor_var,4) ))
 
   return(list(
     Rhat_trt_eff_posterior = Rhat_trt_eff_posterior,
     Rhat_inter = Rhat_inter,
-    Rhat_trt = Rhat_trt
+    Rhat_factor_var = Rhat_factor_var
   ))
 }

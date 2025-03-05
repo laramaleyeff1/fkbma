@@ -7,7 +7,20 @@
 \method{predict}{rjMCMC}(object, newdata = NULL, ...)
 }
 \arguments{
-\item{object}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, including posterior samples and fitted splines.}
+\item{object}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, which includes:
+\describe{
+\item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+\item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+\item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+\item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+\item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+\item{data_fit}{Original dataset used in the \code{rjMCMC} procedure.}
+\item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+\item{candsplinevars}{Names of continuous candidate spline variables.}
+\item{candbinaryvars}{Names of binary candidate variables.}
+\item{candinter}{Names of interaction terms, which can include spline variables.}
+\item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
+}}
 
 \item{newdata}{A data frame for which predictions are to be made. If NA, the original fitted data is used.}
 
@@ -30,15 +43,8 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
-newdata = data.frame(Z_1 = 1, Z_2 = 1, Z_3 = 1, Z_4 = 1, Z_5 = 1,
-                   trt = 1, X_1 = seq(0,1,by=0.01))
+           outcome = "Y", factor_var = "trt")
 predict(results)
-predict(results,newdata)
 }
 }

@@ -7,28 +7,37 @@
 rhats(results)
 }
 \arguments{
-\item{results}{An \code{rjMCMC} object, including:
+\item{results}{An object of class rjMCMC containing the output from the \code{rjMCMC} procedure, which includes:
 \describe{
-\item{trt_eff_posterior}{Matrix of posterior treatment effects.}
-\item{inter_trt_param}{Matrix of posterior estimates for intercept and main treatment effect.}
+\item{fixed_param}{Matrix of posterior samples for exposure intercept and main effect.}
+\item{binary_param}{Matrix of posterior samples for binary variable parameters.}
+\item{sigma_sq}{Matrix of posterior samples for the residual variance (sigma squared).}
+\item{vars_prop_summ}{Posterior inclusion probabilities for candidate variables.}
+\item{splines_fitted}{List of matrices containing fitted values for spline terms across iterations.}
+\item{data_fit}{Original dataset used in the \code{rjMCMC} procedure.}
+\item{candsplineinter}{Names of continuous candidate predictive spline variables.}
+\item{candsplinevars}{Names of continuous candidate spline variables.}
+\item{candbinaryvars}{Names of binary candidate variables.}
+\item{candinter}{Names of interaction terms, which can include spline variables.}
+\item{mcmc_specs}{MCMC sampler specifications, including the number of iterations, burn-in, thinning, and chains.}
 }}
 }
 \value{
 A list containing:
 \describe{
-\item{Rhat_trt_eff_posterior}{Vector of R-hat values for each individual's treatment effect.}
+\item{Rhat_trt_eff_posterior}{Vector of R-hat values for each individual's exposure effect.}
 \item{Rhat_inter}{R-hat value for the intercept parameter.}
-\item{Rhat_trt}{R-hat value for the main effect of treatment.}
+\item{Rhat_factor_var}{R-hat value for the main effect of exposure.}
 }
 }
 \description{
 This function calculates the Rhat diagnostic for convergence based on the posterior samples
-of individual treatment effects, intercept, and main treatment effect from an rjMCMC model.
-It prints the median, minimum, and maximum Rhat values for the treatment effects, as well as
-the Rhat for the intercept and treatment effect.
+of individual exposure effects, intercept, and main exposure effect from an rjMCMC model.
+It prints the median, minimum, and maximum Rhat values for the exposure effects, as well as
+the Rhat for the intercept and exposure effect.
 }
 \details{
-This function calculates R-hat statistics to assess MCMC convergence for both treatment effects and model parameters.
+This function calculates R-hat statistics to assess MCMC convergence for both exposure effects and model parameters.
 Diagnostic plots are generated to visually inspect the chains across iterations.
 }
 \examples{
@@ -40,12 +49,8 @@ candsplinevars <- c("X_1")
 candbinaryvars <- paste0("Z_", 1:5)
 candinter <- c(candsplinevars, candbinaryvars)
 
-mcmc_specs <- list(B = 2000, burnin = 1000, thin = 1, chains = 2, sigma_v = 0.1, bma = TRUE)
-prior_params <- list(lambda_1 = 0.1, lambda_2 = 1, a_0 = 0.01, b_0 = 0.01,
-                  degree = 3, k_max = 9, w = 1, sigma_B = sqrt(20))
-
 results <- rjMCMC(simulated_data, candsplinevars, candbinaryvars, candinter,
-                  mcmc_specs, prior_params)
+                  outcome = "Y", factor_var = "trt")
 rhats(results)
 }
 }
